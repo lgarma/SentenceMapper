@@ -11,3 +11,14 @@ wheels/
 
 # uv
 uv.lock
+
+# Files
+*.jsonl
+*.zip
+*.png
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+
