@@ -17,7 +17,7 @@ Sentence Mapper uses a novel **embedding-based extractive summarization** techni
 1. **Document Chunking**: Splits documents into overlapping chunks
 2. **Embedding Analysis**: Computes embeddings for both chunks and individual sentences
 3. **Similarity & Ratio Scoring**: Calculates cosine similarity between sentences and their parent chunks, plus sentence-to-chunk length ratios
-4. **Intelligent Filtering**: Uses an arctan-based optimizer to select sentences with high information density
+4. **Intelligent Filtering**: Uses a sigmoid-based optimizer to select sentences with high information density
 
 ### The Three Regions
 
@@ -86,17 +86,17 @@ For complex documents where context is critical:
 
 ## How It Works
 
-The optimizer uses an **arctan function** with adaptive parameters to create a decision boundary in similarity-ratio space:
+The optimizer uses a **sigmoid function** with adaptive parameters to create a decision boundary in similarity-ratio space:
 
 ```
-y = α × arctan((x - β) / γ)
+y = A / (1 + e^(-k(x - m)))
 ```
 
-- **α (amplitude)**: Decreases as optimization progresses
-- **β (horizontal shift)**: Increases to be more selective
-- **γ (steepness)**: Controls curve smoothness
+- **A (amplitude)**: Decreases as optimization progresses, controlling maximum threshold
+- **m (midpoint)**: Increases to be more selective, shifting the curve right
+- **k (steepness)**: Controls the sharpness of the transition (default: 10.0)
 
-A bisection algorithm finds the optimal parameter `x` that yields the target token count, automatically balancing informativeness and conciseness.
+A bisection algorithm finds the optimal parameter `x` that yields the target token count, automatically balancing informativeness and conciseness. The sigmoid function provides sharper, more decisive cutoffs compared to other curve types, making it ideal for clear decision boundaries in sentence selection.
 
 ## Installation
 
