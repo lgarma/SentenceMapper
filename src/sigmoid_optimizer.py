@@ -10,7 +10,6 @@ class SigmoidOptimizer:
 
     def __init__(
         self,
-        steepness: float = 10.0,
         strategy: Literal[
             "balanced", "short_sentences", "high_similarity"
         ] = "balanced",
@@ -25,22 +24,24 @@ class SigmoidOptimizer:
                 - "short_sentences": Prefers shorter sentences (amplitude grows slowly, midpoint shifts quickly)
                 - "high_similarity": Prefers high similarity sentences (amplitude grows quickly, midpoint shifts slowly)
         """
-        self.steepness = steepness
         self.strategy = strategy
 
         # Strategy-specific parameters
-        if strategy == "short_sentences":
-            self.amplitude_growth = 0.5  # Slower amplitude growth
-            self.midpoint_base = 0.3  # Start midpoint lower
-            self.midpoint_scale = 0.5  # Faster midpoint displacement
-        elif strategy == "high_similarity":
-            self.amplitude_growth = 1.5  # Faster amplitude growth
-            self.midpoint_base = 0.6  # Start midpoint higher
-            self.midpoint_scale = 0.2  # Slower midpoint displacement
-        else:  # balanced
+        if strategy == "balanced":
             self.amplitude_growth = 1.0
             self.midpoint_base = 0.5
             self.midpoint_scale = 0.3
+            self.steepness = 10.0
+        elif strategy == "short_sentences":
+            self.amplitude_growth = 0.8  # Slower amplitude growth
+            self.midpoint_base = 0.4  # Start midpoint lower
+            self.midpoint_scale = 0.4  # Faster midpoint displacement
+            self.steepness = 5.0  # Reduce steepness
+        elif strategy == "high_similarity":
+            self.amplitude_growth = 2  # Faster amplitude growth
+            self.midpoint_base = 0.6  # Start midpoint higher
+            self.midpoint_scale = 0.2  # Slower midpoint displacement
+            self.steepness = 20.0  # Increase steepness
 
     def get_params(self, x: float) -> tuple[float, float, float]:
         """Get parameters for sigmoid function based on input x.
