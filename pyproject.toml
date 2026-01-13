@@ -10,8 +10,10 @@ dependencies = [
     "langchain-community>=0.3.29",
     "matplotlib>=3.10.8",
     "model2vec>=0.6.0",
+    "openai>=2.15.0",
     "pre-commit>=4.3.0",
     "pydantic>=2.11.8",
+    "rouge-score>=0.1.2",
     "scikit-learn>=1.8.0",
     "tiktoken>=0.11.0",
 ]
