@@ -1,0 +1,18 @@
+# pre-commit configuration file
+# See https://pre-commit.com for more details
+# To update hooks, run `pre-commit autoupdate`
+
+# Exclude notebooks
+exclude: '\.ipynb$'
+
+repos:
+
+  # Ruff: fast python linter and formatter
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+    
