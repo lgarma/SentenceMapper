@@ -14,7 +14,7 @@ class SentenceMapperPipeline:
     def __init__(
         self,
         embedding_model_name: str = "minishlab/potion-base-8M",
-        chunk_size: int = 2000,
+        chunk_size: int = 2048,
         chunk_overlap: int = 0,
         encoding_name: str = "cl100k_base",
         strategy: Literal[
@@ -25,8 +25,8 @@ class SentenceMapperPipeline:
 
         Args:
             embedding_model_name: Name of the embedding model (default: "minishlab/potion-base-8M")
-            chunk_size: Size of text chunks in tokens (default: 512)
-            chunk_overlap: Overlap between chunks in tokens (default: 128)
+            chunk_size: Size of text chunks in tokens (default: 2048)
+            chunk_overlap: Overlap between chunks in tokens (default: 0)
             encoding_name: Name of the tiktoken encoding (default: "cl100k_base")
             strategy: Selection strategy (default: "balanced")
                 - "balanced": Balances similarity and length
