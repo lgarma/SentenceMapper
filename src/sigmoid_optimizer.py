@@ -29,17 +29,17 @@ class SigmoidOptimizer:
         # Strategy-specific parameters
         if strategy == "balanced":
             self.amplitude_growth = 1.0
-            self.midpoint_base = 0.5
+            self.midpoint_base = 0.6
             self.midpoint_scale = 0.3
             self.steepness = 10.0
         elif strategy == "short_sentences":
             self.amplitude_growth = 0.8  # Slower amplitude growth
-            self.midpoint_base = 0.4  # Start midpoint lower
+            self.midpoint_base = 0.5  # Start midpoint lower
             self.midpoint_scale = 0.4  # Faster midpoint displacement
             self.steepness = 5.0  # Reduce steepness
         elif strategy == "high_similarity":
             self.amplitude_growth = 2  # Faster amplitude growth
-            self.midpoint_base = 0.6  # Start midpoint higher
+            self.midpoint_base = 0.7  # Start midpoint higher
             self.midpoint_scale = 0.2  # Slower midpoint displacement
             self.steepness = 20.0  # Increase steepness
 
