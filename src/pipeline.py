@@ -94,13 +94,16 @@ class SentenceMapperPipeline:
                 objective_percentage,
             )
             selected_sentences = self.processor.select_sentences(sentences, mask)
+            selected_text = self.processor.select_sentences_with_separators(
+                sentences, mask
+            )
 
             result.update(
                 {
                     "mask": mask,
                     "x_opt": x_opt,
                     "selected_sentences": selected_sentences,
-                    "selected_text": "\n".join(selected_sentences),
+                    "selected_text": selected_text,
                     "selected_tokens": np.sum(np.array(tokens) * mask),
                     "params": self.optimizer.get_params(x_opt),
                 }
