@@ -220,3 +220,4 @@ __marimo__/
 *.zip
 *.png
 *.html
+.DS_Store
