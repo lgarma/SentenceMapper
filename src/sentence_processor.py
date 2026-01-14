@@ -126,3 +126,32 @@ class SentenceProcessor:
                     selected.append(sentence.text)
                 idx += 1
         return selected
+
+    def select_sentences_with_separators(
+        self, sentences: list[list[Any]], mask: np.ndarray, separator: str = " (...) "
+    ) -> str:
+        """Select sentences and join them with separators for non-consecutive sentences.
+
+        Args:
+            sentences: List of sentence lists per chunk
+            mask: Binary mask indicating which sentences to select
+            separator: String to insert between non-consecutive sentences (default: " (...) ")
+
+        Returns:
+            String with selected sentences joined, using separator for gaps
+        """
+        selected_parts = []
+        idx = 0
+        prev_idx = -2  # Initialize to ensure first sentence doesn't get a separator
+
+        for sentence_list in sentences:
+            for sentence in sentence_list:
+                if mask[idx] == 1:
+                    # Add separator if there's a gap from the previous selected sentence
+                    if prev_idx >= 0 and idx != prev_idx + 1:
+                        selected_parts.append(separator)
+                    selected_parts.append(sentence.text)
+                    prev_idx = idx
+                idx += 1
+
+        return "".join(selected_parts)
