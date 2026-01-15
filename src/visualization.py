@@ -4,16 +4,27 @@ from typing import Any
 
 import numpy as np
 import matplotlib.pyplot as plt
-from .sigmoid_optimizer import SigmoidOptimizer
+from .powerlaw_optimizer import PowerLawOptimizer
 
 
 class SentenceMapperVisualizer:
     """Visualization tools for sentence mapping results."""
 
-    def __init__(self, strategy) -> None:
-        """Initialize the visualizer."""
-        self.strategy = strategy
-        self.optimizer = SigmoidOptimizer(strategy)
+    def __init__(
+        self,
+        slope: float = 1.0,
+        initial_intercept: float = 0.0,
+    ) -> None:
+        """Initialize the visualizer.
+
+        Args:
+            slope: Fixed slope for power law optimizer
+            initial_intercept: Initial intercept for power law optimizer
+        """
+        self.optimizer = PowerLawOptimizer(
+            slope=slope,
+            intercept=initial_intercept,
+        )
 
     def plot_similarity_vs_ratio(
         self,
@@ -83,16 +94,17 @@ class SentenceMapperVisualizer:
             # Initialize color assignment array (-1 means unassigned)
             point_colors = np.full(len(similarities), -1, dtype=int)
 
-            # Compute sigmoid curves and assign colors to points below curves
+            # Compute threshold curves and assign colors to points below curves
             if x_opts is not None:
-                sim_range = np.linspace(0, 1, 1000)
                 for idx, x in enumerate(x_opts):
-                    amplitude, midpoint, steepness = self.optimizer.get_params(x)
-
-                    # For each point, check if it's below the sigmoid curve
-                    threshold_ratios = self.optimizer.sigmoid(
-                        similarities, amplitude, midpoint, steepness
+                    amplitude, slope = self.optimizer.get_params(x)
+                    sim_clipped = np.maximum(
+                        similarities, self.optimizer.min_similarity
                     )
+                    threshold_ratios = self.optimizer.powerlaw(
+                        sim_clipped, amplitude, slope
+                    )
+
                     below_curve = ratios <= threshold_ratios
 
                     # Assign color only if not already assigned (first curve wins)
@@ -126,14 +138,16 @@ class SentenceMapperVisualizer:
                         s=20,
                     )
 
-            # Plot sigmoid curves
+            # Plot threshold curves
             if x_opts is not None:
-                sim_range = np.linspace(0, 1, 1000)
+                sim_range = np.linspace(0.001, 1, 1000)
                 for idx, x in enumerate(x_opts):
-                    amplitude, midpoint, steepness = self.optimizer.get_params(x)
-                    y = self.optimizer.sigmoid(
-                        sim_range, amplitude, midpoint, steepness
+                    amplitude, slope = self.optimizer.get_params(x)
+                    sim_range_clipped = np.maximum(
+                        sim_range, self.optimizer.min_similarity
                     )
+                    y = self.optimizer.powerlaw(sim_range_clipped, amplitude, slope)
+
                     color = colors[idx % len(colors)]
 
                     # Determine curve label
@@ -161,155 +175,6 @@ class SentenceMapperVisualizer:
         if masks is not None:
             plt.legend(frameon=False)
 
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-
-        if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches="tight")
-
-        plt.show()
-
-    def plot_three_regions(
-        self,
-        similarities: np.ndarray,
-        ratios: np.ndarray,
-        title: str = "Three Regions of Sentence Characteristics",
-        figsize: tuple[int, int] = (12, 8),
-        save_path: str | None = None,
-    ) -> None:
-        """Plot scatter plot highlighting the three characteristic regions.
-
-        The three regions are:
-        - Low similarity, low ratio: Transitional sentences (bottom-left)
-        - High similarity, high ratio: Tables/lists/repetitive sections (top-right)
-        - High similarity, low ratio: Information-dense sentences (bottom-right) ⭐
-
-        Args:
-            similarities: Array of cosine similarities
-            ratios: Array of sentence-to-chunk length ratios
-            title: Plot title (default: "Three Regions of Sentence Characteristics")
-            figsize: Figure size (default: (12, 8))
-            save_path: Optional path to save the figure
-        """
-        plt.figure(figsize=figsize)
-        plt.style.use("seaborn-v0_8-poster")
-
-        # Define region boundaries (these are heuristic thresholds)
-        sim_threshold = 0.6  # Boundary between low and high similarity
-        ratio_threshold = 0.15  # Boundary between low and high ratio
-
-        # Classify points into regions
-        # Region 1: Low similarity, low ratio (transitional)
-        region1 = (similarities < sim_threshold) & (ratios < ratio_threshold)
-
-        # Region 2: High similarity, high ratio (tables/lists)
-        region2 = (similarities >= sim_threshold) & (ratios >= ratio_threshold)
-
-        # Region 3: High similarity, low ratio (information-dense) ⭐
-        region3 = (similarities >= sim_threshold) & (ratios < ratio_threshold)
-
-        # Other points (low similarity, high ratio - uncommon)
-        other = (similarities < sim_threshold) & (ratios >= ratio_threshold)
-
-        # Plot each region with distinct colors and labels
-        if np.any(region1):
-            plt.scatter(
-                similarities[region1],
-                ratios[region1],
-                alpha=0.6,
-                s=30,
-                color="lightcoral",
-                label="Transitional\n(Low Sim, Low Ratio)",
-                edgecolors="darkred",
-                linewidth=0.5,
-            )
-
-        if np.any(region2):
-            plt.scatter(
-                similarities[region2],
-                ratios[region2],
-                alpha=0.6,
-                s=30,
-                color="lightblue",
-                label="Tables/Lists\n(High Sim, High Ratio)",
-                edgecolors="darkblue",
-                linewidth=0.5,
-            )
-
-        if np.any(region3):
-            plt.scatter(
-                similarities[region3],
-                ratios[region3],
-                alpha=0.6,
-                s=30,
-                color="lightgreen",
-                label="Information-Dense\n(High Sim, Low Ratio)",
-                edgecolors="darkgreen",
-                linewidth=0.5,
-            )
-
-        if np.any(other):
-            plt.scatter(
-                similarities[other],
-                ratios[other],
-                alpha=0.3,
-                s=20,
-                color="gray",
-                label="Other",
-                edgecolors="black",
-                linewidth=0.5,
-            )
-
-        # Add vertical and horizontal lines to show boundaries
-        plt.axvline(
-            x=sim_threshold,
-            color="black",
-            linestyle="--",
-            alpha=0.5,
-            linewidth=1.5,
-            label="Region Boundaries",
-        )
-        plt.axhline(
-            y=ratio_threshold, color="black", linestyle="--", alpha=0.5, linewidth=1.5
-        )
-
-        # Add region annotations
-        annotation_style = dict(
-            bbox=dict(
-                boxstyle="round,pad=0.5", facecolor="white", edgecolor="gray", alpha=0.8
-            ),
-            fontsize=18,
-            ha="center",
-        )
-
-        # Annotate each region at appropriate positions
-        plt.text(
-            0.25,
-            0.05,
-            "Short Transitional\nSentences",
-            annotation_style,
-            color="darkred",
-        )
-        plt.text(
-            0.75,
-            0.30,
-            "Large Sentences\n(May contain good information,\nbut not in an efficient manner)",
-            annotation_style,
-            color="darkblue",
-        )
-        plt.text(
-            0.75,
-            0.05,
-            "Information-Dense\nSentences",
-            annotation_style,
-            color="darkgreen",
-            fontweight="bold",
-        )
-
-        plt.xlabel("Cosine Similarity to Chunk")
-        plt.ylabel("Sentence to Chunk Length Ratio")
-        plt.title(title)
-        plt.legend(loc="upper left", frameon=True, fancybox=True, shadow=True)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
 
@@ -384,3 +249,178 @@ class SentenceMapperVisualizer:
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n".join(html_parts))
+
+    def plot_with_frontier(
+        self,
+        similarities: np.ndarray,
+        ratios: np.ndarray,
+        slope: float,
+        intercept: float,
+        info: dict,
+        mask: np.ndarray | None = None,
+        x_opt: float | list[float] | None = None,
+        labels: str | list[str] | None = None,
+        title: str = "Similarity vs Ratio with Frontier Curve",
+        figsize: tuple[int, int] = (10, 6),
+        save_path: str | None = None,
+    ) -> None:
+        """Plot similarity vs ratio with fitted frontier curve in log-log space.
+
+        This unified visualization combines residual-based coloring with multiple
+        threshold curves. Points are colored by their distance from the frontier
+        (residual), while multiple threshold curves can be overlaid with distinct colors.
+
+        Args:
+            similarities: Array of cosine similarities
+            ratios: Array of sentence-to-chunk length ratios
+            slope: Slope of the fitted frontier line
+            intercept: Intercept of the fitted frontier line
+            info: Dictionary with fit information
+            mask: Optional binary mask indicating selected sentences (deprecated, not used)
+            x_opt: Optional optimal parameter value(s) for threshold curves.
+                   Can be a single value or list of values for multiple thresholds.
+            labels: Optional label(s) for each threshold. Can be a single string or list of strings.
+                    If not provided, defaults to percentage labels when x_opt is given.
+            title: Plot title
+            figsize: Figure size (default: (10, 6))
+            save_path: Optional path to save the figure
+        """
+        # Create plot
+        plt.figure(figsize=figsize)
+        plt.style.use("seaborn-v0_8-poster")
+
+        # Filter valid points for log scale
+        valid_mask = (similarities > 0) & (ratios > 0)
+        sim_plot = similarities[valid_mask]
+        ratio_plot = ratios[valid_mask]
+
+        # Calculate residuals (distance below frontier)
+        log_sim = np.log10(sim_plot)
+        log_ratio = np.log10(ratio_plot)
+        expected_log_ratio = slope * log_sim + intercept
+        residuals = log_ratio - expected_log_ratio  # Negative = below frontier
+
+        # Separate points: below frontier (colored by residual) vs above frontier (grey)
+        below_frontier = residuals <= 0
+
+        # Plot points above the frontier in grey
+        if np.any(~below_frontier):
+            plt.scatter(
+                sim_plot[~below_frontier],
+                ratio_plot[~below_frontier],
+                color="lightgrey",
+                alpha=0.3,
+                s=20,
+                label=None,  # "Above Frontier",
+            )
+
+        # Plot points below the frontier, colored by residual
+        if np.any(below_frontier):
+            scatter = plt.scatter(
+                sim_plot[below_frontier],
+                ratio_plot[below_frontier],
+                c=residuals[below_frontier],
+                cmap="RdYlGn_r",  # Red = at frontier, Green = well below
+                alpha=0.6,
+                s=20,
+            )
+            plt.colorbar(scatter, label="Residual (log scale)")
+
+        # Plot frontier line
+        sim_range = np.logspace(np.log10(sim_plot.min()), np.log10(sim_plot.max()), 100)
+        ratio_frontier = 10 ** (slope * np.log10(sim_range) + intercept)
+        plt.plot(
+            sim_range,
+            ratio_frontier,
+            "b--",
+            linewidth=2,
+            label=f"Frontier (R²={info['r_squared']:.3f})",
+        )
+
+        # Plot frontier points if available
+        if info.get("frontier_sim") is not None:
+            frontier_sim_orig = 10 ** info["frontier_sim"]
+            frontier_ratio_orig = 10 ** info["frontier_ratio"]
+            plt.scatter(
+                frontier_sim_orig,
+                frontier_ratio_orig,
+                color="blue",
+                s=50,
+                marker="x",
+                label="Frontier Points",
+                zorder=5,
+            )
+
+        # Plot threshold curves if provided
+        if x_opt is not None:
+            # Convert to list for uniform handling
+            x_opts = [x_opt] if isinstance(x_opt, (int, float)) else x_opt
+
+            # Handle labels
+            if labels is not None:
+                label_list = [labels] if isinstance(labels, str) else labels
+                if len(label_list) != len(x_opts):
+                    raise ValueError(
+                        "Number of labels must match number of x_opt values"
+                    )
+            else:
+                label_list = None
+
+            # Define colors for different threshold curves
+            colors = [
+                "red",
+                "orange",
+                "purple",
+                "brown",
+                "pink",
+                "gray",
+                "olive",
+                "cyan",
+            ]
+
+            # Plot each threshold curve
+            sim_curve_range = np.linspace(0.001, 1, 1000)
+            for idx, x in enumerate(x_opts):
+                amplitude, curve_slope = self.optimizer.get_params(x)
+                sim_range_clipped = np.maximum(
+                    sim_curve_range, self.optimizer.min_similarity
+                )
+                y = self.optimizer.powerlaw(sim_range_clipped, amplitude, curve_slope)
+
+                color = colors[idx % len(colors)]
+
+                # Filter out zeros for log scale
+                valid_curve = y > 0
+                sim_curve = sim_curve_range[valid_curve]
+                y_curve = y[valid_curve]
+
+                # Determine curve label
+                if label_list is not None:
+                    curve_label = f"{label_list[idx]}"
+                else:
+                    curve_label = f"Threshold ({x:.1%})"
+
+                plt.plot(
+                    sim_curve,
+                    y_curve,
+                    color=color,
+                    linewidth=2,
+                    linestyle="-",
+                    label=curve_label,
+                )
+
+        plt.xscale("log")
+        plt.yscale("log")
+        plt.xlim(np.min(sim_plot) * 0.9, np.max(sim_plot) * 1.1)
+        plt.ylim(np.min(ratio_plot) * 0.9, np.max(ratio_plot) * 1.1)
+        plt.xlabel("Cosine Similarity to Chunk (log scale)")
+        plt.ylabel("Sentence to Chunk Length Ratio (log scale)")
+        plt.title(f"{title}")
+        plt.legend(frameon=True)
+        plt.grid(True, alpha=0.3, which="both")
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+        plt.show()
