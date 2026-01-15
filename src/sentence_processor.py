@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 import tiktoken
 from chonkie import SentenceChunker
+from model2vec import StaticModel
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -13,21 +14,27 @@ class SentenceProcessor:
 
     def __init__(
         self,
+        embedding_model_name: str = "minishlab/potion-base-8M",
         chunk_size: int = 2048,
         chunk_overlap: int = 0,
+        min_sentence_length: int = 100,
         encoding_name: str = "cl100k_base",
     ):
         """Initialize the sentence processor.
 
         Args:
+            embedding_model_name: Name of the embedding model (default: "minishlab/potion-base-8M")
             chunk_size: Size of text chunks in tokens (default: 2048)
             chunk_overlap: Overlap between chunks in tokens (default: 0)
             encoding_name: Name of the tiktoken encoding (default: "cl100k_base")
         """
+        self.embedding_model = StaticModel.from_pretrained(embedding_model_name)
         self.chunker = SentenceChunker(
             chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
-        self.sentence_chunker = SentenceChunker(chunk_size=1, chunk_overlap=0)
+        self.sentence_chunker = SentenceChunker(
+            chunk_size=min_sentence_length, chunk_overlap=0
+        )
         self.encoder = tiktoken.get_encoding(encoding_name)
 
     def chunk_text(self, text: str) -> list[Any]:
@@ -155,3 +162,43 @@ class SentenceProcessor:
                 idx += 1
 
         return "".join(selected_parts)
+
+    def compute_document_features(self, text: str) -> dict:
+        """Compute similarities, ratios, and tokens for all sentences in a document.
+
+        Args:
+            text: Input document text
+
+        Returns:
+            Dictionary containing:
+                - chunks: List of text chunks
+                - sentences: List of sentence lists per chunk
+                - similarities: Cosine similarities between sentences and chunks
+                - all_similarities: Flattened array of all similarities
+                - ratios: Sentence-to-chunk length ratios
+                - tokens: Token counts per sentence
+                - total_tokens: Total token count
+        """
+        chunks = self.chunk_text(text)
+        chunk_embeddings = self.embedding_model.encode([chunk.text for chunk in chunks])
+        sentences = self.extract_sentences(chunks)
+        sentence_embeddings = [
+            self.embedding_model.encode([sentence.text for sentence in sentence_list])
+            for sentence_list in sentences
+        ]
+        similarities = self.compute_similarities(chunk_embeddings, sentence_embeddings)
+        ratios = self.compute_length_ratios(chunks, sentences)
+        tokens = self.count_tokens(sentences)
+        all_similarities = np.array(
+            [sim for sublist in similarities for sim in sublist]
+        )
+
+        return {
+            "chunks": chunks,
+            "sentences": sentences,
+            "similarities": similarities,
+            "all_similarities": all_similarities,
+            "ratios": np.array(ratios),
+            "tokens": np.array(tokens),
+            "total_tokens": sum(tokens),
+        }

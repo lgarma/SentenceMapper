@@ -1,10 +1,8 @@
 """End-to-end sentence mapping pipeline."""
 
 import numpy as np
-from model2vec import StaticModel
-from typing import Literal
 
-from .sigmoid_optimizer import SigmoidOptimizer
+from .powerlaw_optimizer import PowerLawOptimizer, fit_frontier_curve
 from .sentence_processor import SentenceProcessor
 
 
@@ -16,10 +14,8 @@ class SentenceMapperPipeline:
         embedding_model_name: str = "minishlab/potion-base-8M",
         chunk_size: int = 2048,
         chunk_overlap: int = 0,
+        min_sentence_length: int = 100,
         encoding_name: str = "cl100k_base",
-        strategy: Literal[
-            "balanced", "short_sentences", "high_similarity"
-        ] = "balanced",
     ):
         """Initialize the pipeline.
 
@@ -28,14 +24,53 @@ class SentenceMapperPipeline:
             chunk_size: Size of text chunks in tokens (default: 2048)
             chunk_overlap: Overlap between chunks in tokens (default: 0)
             encoding_name: Name of the tiktoken encoding (default: "cl100k_base")
-            strategy: Selection strategy (default: "balanced")
-                - "balanced": Balances similarity and length
-                - "short_sentences": Prefers shorter sentences
-                - "high_similarity": Prefers high similarity sentences
+            slope: Fixed slope for power law optimizer (default: 1.0)
+            initial_intercept: Initial intercept for power law optimizer (default: 0.0)
         """
-        self.embedding_model = StaticModel.from_pretrained(embedding_model_name)
-        self.processor = SentenceProcessor(chunk_size, chunk_overlap, encoding_name)
-        self.optimizer = SigmoidOptimizer(strategy)
+        self.processor = SentenceProcessor(
+            embedding_model_name,
+            chunk_size,
+            chunk_overlap,
+            min_sentence_length,
+            encoding_name,
+        )
+
+    def apply_sentence_filter(
+        self,
+        features: dict,
+        mask: np.ndarray,
+        x_opt: float,
+        objective_percentage: float,
+    ) -> dict:
+        """Apply filtering to select sentences based on optimizer criteria.
+
+        Args:
+            features: Dictionary returned by compute_document_features
+            objective_percentage: Target percentage of tokens to select (e.g., 0.2 = 20%)
+
+        Returns:
+            Dictionary containing:
+                - mask: Binary mask of selected sentences
+                - x_opt: Optimal parameter value
+                - selected_sentences: List of selected sentence texts
+                - selected_text: Selected sentences joined with separators
+                - selected_tokens: Total token count of selected sentences
+                - params: Optimizer parameters used
+        """
+        selected_sentences = self.processor.select_sentences(
+            features["sentences"], mask
+        )
+        selected_text = self.processor.select_sentences_with_separators(
+            features["sentences"], mask
+        )
+
+        return {
+            "mask": mask,
+            "x_opt": x_opt,
+            "selected_sentences": selected_sentences,
+            "selected_text": selected_text,
+            "selected_tokens": np.sum(features["tokens"] * mask),
+        }
 
     def process_document(
         self, text: str, objective_percentage: float | None = None
@@ -57,56 +92,31 @@ class SentenceMapperPipeline:
                 - selected_sentences: List of selected sentence texts (if objective_percentage is set)
                 - mask: Binary mask of selected sentences (if objective_percentage is set)
                 - x_opt: Optimal parameter value (if objective_percentage is set)
-                - params: Sigmoid parameters used (if objective_percentage is set)
+                - params: Power law parameters used (if objective_percentage is set)
         """
-        chunks = self.processor.chunk_text(text)
-        chunk_embeddings = self.embedding_model.encode([chunk.text for chunk in chunks])
-        sentences = self.processor.extract_sentences(chunks)
-        sentence_embeddings = [
-            self.embedding_model.encode([sentence.text for sentence in sentence_list])
-            for sentence_list in sentences
-        ]
-        similarities = self.processor.compute_similarities(
-            chunk_embeddings, sentence_embeddings
-        )
-        ratios = self.processor.compute_length_ratios(chunks, sentences)
-        tokens = self.processor.count_tokens(sentences)
-        all_similarities = np.array(
-            [sim for sublist in similarities for sim in sublist]
+        features = self.processor.compute_document_features(text)
+
+        slope, intercept, info = fit_frontier_curve(
+            features["all_similarities"],
+            features["ratios"],
+            quantile=0.95,
+            method="quantile",
         )
 
-        result = {
-            "chunks": chunks,
-            "sentences": sentences,
-            "similarities": similarities,
-            "all_similarities": all_similarities,
-            "ratios": np.array(ratios),
-            "tokens": np.array(tokens),
-            "total_tokens": sum(tokens),
-        }
+        optimizer = PowerLawOptimizer(slope=slope, intercept=intercept)
+        mask, x_opt = optimizer.filter_sentences(
+            features["all_similarities"],
+            features["ratios"],
+            features["tokens"],
+            objective_percentage,
+        )
+        features["params"] = optimizer.get_params(x_opt)
 
         # Apply filtering if objective percentage is specified
         if objective_percentage is not None:
-            mask, x_opt = self.optimizer.filter_sentences(
-                all_similarities,
-                np.array(ratios),
-                np.array(tokens),
-                objective_percentage,
+            filter_results = self.apply_sentence_filter(
+                features, mask, x_opt, objective_percentage
             )
-            selected_sentences = self.processor.select_sentences(sentences, mask)
-            selected_text = self.processor.select_sentences_with_separators(
-                sentences, mask
-            )
+            features.update(filter_results)
 
-            result.update(
-                {
-                    "mask": mask,
-                    "x_opt": x_opt,
-                    "selected_sentences": selected_sentences,
-                    "selected_text": selected_text,
-                    "selected_tokens": np.sum(np.array(tokens) * mask),
-                    "params": self.optimizer.get_params(x_opt),
-                }
-            )
-
-        return result
+        return features
