@@ -71,6 +71,7 @@ class MapReduceSummarizer:
             embedding_model_name=embedding_model_name,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            min_sentence_length=250,
         )
 
         self.objective_percentage = objective_percentage
@@ -108,7 +109,6 @@ class MapReduceSummarizer:
                 {"role": "user", "content": prompt},
             ],
             max_completion_tokens=max_tokens,
-            temperature=0.3,
         )
 
         return response.choices[0].message.content.strip()
@@ -142,7 +142,6 @@ class MapReduceSummarizer:
                 {"role": "user", "content": prompt},
             ],
             max_completion_tokens=max_tokens,
-            temperature=0.3,
             response_format={"type": "json_object"},
         )
 
@@ -278,7 +277,7 @@ def main():
 
     # Configuration
     data_file = Path(__file__).parent.parent / "data" / "gov_report" / "train.jsonl"
-    example_index = 1  # np.random.randint(0, 200)  # Random index between 0 and 200
+    example_index = 0  # np.random.randint(0, 200)  # Random index between 0 and 200
 
     print("=" * 80)
     print("Map-Reduce Summarization with SentenceMapper + OpenAI")
@@ -295,8 +294,8 @@ def main():
     # Initialize summarizer
     print("\nInitializing MapReduceSummarizer...")
     summarizer = MapReduceSummarizer(
-        objective_percentage=0.3,
-        summarize_model="gpt-4o-mini",
+        objective_percentage=0.1,
+        summarize_model="gpt-4o",
         judge_model="gpt-4.1",
     )
 
@@ -349,36 +348,32 @@ def main():
     print(f"  Ratio: {len(result['summary']) / len(example['output']):.2f}x")
 
     # LLM Judge Evaluation
-    # print("\n" + "="*80)
-    # print("LLM JUDGE EVALUATION")
-    # print("="*80)
-    # print("\nGenerating detailed evaluation with LLM judge...")
+    print("\n" + "=" * 80)
+    print("LLM JUDGE EVALUATION")
+    print("=" * 80)
+    print("\nGenerating detailed evaluation with LLM judge...")
 
-    # judge_evaluation = summarizer.judge_with_llm(
-    #    result['summary'],
-    #    example['output'],
-    #    result['compression_ratio']
-    # )
+    judge_evaluation = summarizer.judge_with_llm(
+        result["summary"], example["output"], result["compression_ratio"]
+    )
 
     # Display evaluation sections
-    # if "error" in judge_evaluation:
-    #    print(f"\nError: {judge_evaluation['error']}")
-    #    print(judge_evaluation.get('raw_response', ''))
-    # else:
-    #    print("\n## STRENGTHS")
-    #    print(judge_evaluation.get('strengths', 'N/A'))
+    if "error" in judge_evaluation:
+        print(f"\nError: {judge_evaluation['error']}")
+        print(judge_evaluation.get("raw_response", ""))
+    else:
+        print("\n## STRENGTHS")
+        print(judge_evaluation.get("strengths", "N/A"))
 
-    #   print("\n## GAPS & MISSING CONTENT")
-    #   print(judge_evaluation.get('gaps', 'N/A'))
+    print("\n## GAPS & MISSING CONTENT")
+    print(judge_evaluation.get("gaps", "N/A"))
+    print("\n## ACCURACY CONCERNS")
+    print(judge_evaluation.get("accuracy_concerns", "N/A"))
 
-    #    print("\n## ACCURACY CONCERNS")
-    #    print(judge_evaluation.get('accuracy_concerns', 'N/A'))
-
-    #    print("\n## STRATEGIC RECOMMENDATIONS")
-    #    print(judge_evaluation.get('strategic_recommendations', 'N/A'))
-
-    #    print("\n## OVERALL ASSESSMENT")
-    #    print(judge_evaluation.get('overall_assessment', 'N/A'))
+    print("\n## STRATEGIC RECOMMENDATIONS")
+    print(judge_evaluation.get("strategic_recommendations", "N/A"))
+    print("\n## OVERALL ASSESSMENT")
+    print(judge_evaluation.get("overall_assessment", "N/A"))
 
     print("\n" + "=" * 80)
     print("Complete!")
