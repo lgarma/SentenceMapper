@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from .powerlaw_optimizer import PowerLawOptimizer
 
 
@@ -424,3 +425,250 @@ class SentenceMapperVisualizer:
             plt.savefig(save_path, dpi=300, bbox_inches="tight")
 
         plt.show()
+
+    def plot_with_frontier_interactive(
+        self,
+        similarities: np.ndarray,
+        ratios: np.ndarray,
+        slope: float,
+        intercept: float,
+        info: dict,
+        sentences: list[str] | None = None,
+        x_opt: float | list[float] | None = None,
+        labels: str | list[str] | None = None,
+        title: str = "Similarity vs Ratio with Frontier Curve",
+        figsize: tuple[int, int] = (900, 600),
+        save_path: str | None = None,
+    ) -> go.Figure:
+        """Plot interactive similarity vs ratio with fitted frontier curve using Plotly.
+
+        This interactive visualization allows hovering over points to see their
+        residual, sentence text, and coordinates. Points are colored by their
+        distance from the frontier (residual).
+
+        Args:
+            similarities: Array of cosine similarities
+            ratios: Array of sentence-to-chunk length ratios
+            slope: Slope of the fitted frontier line
+            intercept: Intercept of the fitted frontier line
+            info: Dictionary with fit information
+            sentences: Optional list of sentence texts for hover display
+            x_opt: Optional optimal parameter value(s) for threshold curves.
+                   Can be a single value or list of values for multiple thresholds.
+            labels: Optional label(s) for each threshold. Can be a single string or list of strings.
+                    If not provided, defaults to percentage labels when x_opt is given.
+            title: Plot title
+            figsize: Figure size as (width, height) in pixels (default: (900, 600))
+            save_path: Optional path to save the figure (HTML format)
+
+        Returns:
+            Plotly Figure object
+        """
+        fig = go.Figure()
+
+        # Filter valid points for log scale
+        valid_mask = (similarities > 0) & (ratios > 0)
+        sim_plot = similarities[valid_mask]
+        ratio_plot = ratios[valid_mask]
+
+        # Filter sentences if provided
+        if sentences is not None:
+            sentences_plot = [s for s, v in zip(sentences, valid_mask) if v]
+        else:
+            sentences_plot = [f"Sentence {i}" for i in range(len(sim_plot))]
+
+        # Calculate residuals (distance below frontier)
+        log_sim = np.log10(sim_plot)
+        log_ratio = np.log10(ratio_plot)
+        expected_log_ratio = slope * log_sim + intercept
+        residuals = log_ratio - expected_log_ratio  # Negative = below frontier
+
+        # Separate points: below frontier vs above frontier
+        below_frontier = residuals <= 0
+
+        # Create hover text
+        def make_hover_text(sim, ratio, residual, sentence):
+            # Truncate sentence for display
+            truncated = sentence[:100] + "..." if len(sentence) > 100 else sentence
+            return (
+                f"<b>Sentence:</b> {truncated}<br>"
+                f"<b>Similarity:</b> {sim:.4f}<br>"
+                f"<b>Ratio:</b> {ratio:.4f}<br>"
+                f"<b>Residual:</b> {residual:.4f}"
+            )
+
+        # Plot points above the frontier in grey
+        if np.any(~below_frontier):
+            hover_texts_above = [
+                make_hover_text(s, r, res, sent)
+                for s, r, res, sent in zip(
+                    sim_plot[~below_frontier],
+                    ratio_plot[~below_frontier],
+                    residuals[~below_frontier],
+                    [
+                        sentences_plot[i]
+                        for i, bf in enumerate(below_frontier)
+                        if not bf
+                    ],
+                )
+            ]
+            fig.add_trace(
+                go.Scatter(
+                    x=sim_plot[~below_frontier],
+                    y=ratio_plot[~below_frontier],
+                    mode="markers",
+                    marker=dict(color="lightgrey", size=8, opacity=0.5),
+                    name="Above Frontier",
+                    hovertemplate="%{customdata}<extra></extra>",
+                    customdata=hover_texts_above,
+                )
+            )
+
+        # Plot points below the frontier, colored by residual
+        if np.any(below_frontier):
+            hover_texts_below = [
+                make_hover_text(s, r, res, sent)
+                for s, r, res, sent in zip(
+                    sim_plot[below_frontier],
+                    ratio_plot[below_frontier],
+                    residuals[below_frontier],
+                    [sentences_plot[i] for i, bf in enumerate(below_frontier) if bf],
+                )
+            ]
+            fig.add_trace(
+                go.Scatter(
+                    x=sim_plot[below_frontier],
+                    y=ratio_plot[below_frontier],
+                    mode="markers",
+                    marker=dict(
+                        color=residuals[below_frontier],
+                        colorscale="RdYlGn_r",
+                        size=8,
+                        opacity=0.7,
+                        colorbar=dict(title="Residual<br>(log scale)"),
+                    ),
+                    name="Below Frontier",
+                    hovertemplate="%{customdata}<extra></extra>",
+                    customdata=hover_texts_below,
+                )
+            )
+
+        # Plot frontier line
+        sim_range = np.logspace(np.log10(sim_plot.min()), np.log10(sim_plot.max()), 100)
+        ratio_frontier = 10 ** (slope * np.log10(sim_range) + intercept)
+        fig.add_trace(
+            go.Scatter(
+                x=sim_range,
+                y=ratio_frontier,
+                mode="lines",
+                line=dict(color="blue", width=2, dash="dash"),
+                name=f"Frontier (R²={info['r_squared']:.3f})",
+                hoverinfo="skip",
+            )
+        )
+
+        # Plot frontier points if available
+        if info.get("frontier_sim") is not None:
+            frontier_sim_orig = 10 ** info["frontier_sim"]
+            frontier_ratio_orig = 10 ** info["frontier_ratio"]
+            fig.add_trace(
+                go.Scatter(
+                    x=frontier_sim_orig,
+                    y=frontier_ratio_orig,
+                    mode="markers",
+                    marker=dict(color="blue", size=10, symbol="x"),
+                    name="Frontier Points",
+                    hovertemplate="<b>Frontier Point</b><br>Similarity: %{x:.4f}<br>Ratio: %{y:.4f}<extra></extra>",
+                )
+            )
+
+        # Plot threshold curves if provided
+        if x_opt is not None:
+            x_opts = [x_opt] if isinstance(x_opt, (int, float)) else x_opt
+
+            if labels is not None:
+                label_list = [labels] if isinstance(labels, str) else labels
+                if len(label_list) != len(x_opts):
+                    raise ValueError(
+                        "Number of labels must match number of x_opt values"
+                    )
+            else:
+                label_list = None
+
+            colors = [
+                "red",
+                "orange",
+                "purple",
+                "brown",
+                "pink",
+                "gray",
+                "olive",
+                "cyan",
+            ]
+
+            sim_curve_range = np.linspace(0.001, 1, 1000)
+            for idx, x in enumerate(x_opts):
+                amplitude, curve_slope = self.optimizer.get_params(x)
+                sim_range_clipped = np.maximum(
+                    sim_curve_range, self.optimizer.min_similarity
+                )
+                y = self.optimizer.powerlaw(sim_range_clipped, amplitude, curve_slope)
+
+                color = colors[idx % len(colors)]
+
+                valid_curve = y > 0
+                sim_curve = sim_curve_range[valid_curve]
+                y_curve = y[valid_curve]
+
+                if label_list is not None:
+                    curve_label = f"{label_list[idx]}"
+                else:
+                    curve_label = f"Threshold ({x:.1%})"
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=sim_curve,
+                        y=y_curve,
+                        mode="lines",
+                        line=dict(color=color, width=2),
+                        name=curve_label,
+                        hoverinfo="skip",
+                    )
+                )
+
+        # Update layout
+        fig.update_layout(
+            title=title,
+            xaxis=dict(
+                title="Cosine Similarity to Chunk (log scale)",
+                type="log",
+                range=[np.log10(sim_plot.min() * 0.9), np.log10(sim_plot.max() * 1.1)],
+                gridcolor="rgba(128, 128, 128, 0.3)",
+            ),
+            yaxis=dict(
+                title="Sentence to Chunk Length Ratio (log scale)",
+                type="log",
+                range=[
+                    np.log10(ratio_plot.min() * 0.9),
+                    np.log10(ratio_plot.max() * 1.1),
+                ],
+                gridcolor="rgba(128, 128, 128, 0.3)",
+            ),
+            width=figsize[0],
+            height=figsize[1],
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01,
+                bgcolor="rgba(255, 255, 255, 0.8)",
+            ),
+            hovermode="closest",
+            template="plotly_white",
+        )
+
+        if save_path:
+            fig.write_html(save_path)
+
+        fig.show()
+        return fig
