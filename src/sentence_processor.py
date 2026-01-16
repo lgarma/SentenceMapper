@@ -17,7 +17,7 @@ class SentenceProcessor:
         embedding_model_name: str = "minishlab/potion-base-8M",
         chunk_size: int = 2048,
         chunk_overlap: int = 0,
-        min_sentence_length: int = 100,
+        min_sentence_length: int = 256,
         encoding_name: str = "cl100k_base",
     ):
         """Initialize the sentence processor.
