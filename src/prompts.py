@@ -21,7 +21,7 @@ The document comes from the GovReport dataset, which contains about 19.5k report
 They cover researches on a broad range of national policy issues, including health care, education, national security, economics, and the environment.
 
 The text below consists of key sentences that were algorithmically selected based on their information density.
-Short sentences that capture the main ideas of the surrounding text.
+When there is a gap between non-consecutive sentences, it is indicated with the string " (...) ".
 
 # Task
 Synthesize these extracted sentences into a coherent, well-structured summary that accurately reflects the main ideas and important details of the original document.
