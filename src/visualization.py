@@ -185,11 +185,98 @@ class SentenceMapperVisualizer:
         plt.show()
 
     @staticmethod
+    def display_highlighted_text(
+        sentences: list[list[Any]],
+        mask: np.ndarray,
+        title: str = "Sentence Mapping Results",
+        max_chunks: int | None = None,
+        dark_mode: bool = False,
+    ):
+        """Display text with highlighted selected sentences in a Jupyter notebook.
+
+        Args:
+            sentences: List of sentence lists per chunk (from SentenceProcessor)
+            mask: Binary mask indicating selected sentences (1 = selected, 0 = not selected)
+            title: Title for the document (default: "Sentence Mapping Results")
+            max_chunks: Maximum number of chunks to display (default: None = all chunks)
+            dark_mode: Use dark theme styling (default: False)
+
+        Returns:
+            IPython.display.HTML object for notebook display
+        """
+        from IPython.display import HTML
+
+        # Define theme colors
+        if dark_mode:
+            bg_color = "#1e1e1e"
+            text_color = "#e0e0e0"
+            title_color = "#4fc3f7"
+            border_color = "#4fc3f7"
+            chunk_bg = "#2d2d2d"
+            chunk_border = "#555"
+            chunk_header_color = "#9e9e9e"
+            highlight_bg = "#ffd700"
+            highlight_text = "#000"
+        else:
+            bg_color = "#fff"
+            text_color = "#000"
+            title_color = "#333"
+            border_color = "#333"
+            chunk_bg = "#f9f9f9"
+            chunk_border = "#ddd"
+            chunk_header_color = "#666"
+            highlight_bg = "#ffff00"
+            highlight_text = "#000"
+
+        html_parts = [
+            f"<div style='font-family: Arial, sans-serif; line-height: 1.6; background-color: {bg_color}; color: {text_color}; padding: 10px;'>",
+            f"<h2 style='color: {title_color}; border-bottom: 2px solid {border_color}; padding-bottom: 10px;'>{title}</h2>",
+        ]
+
+        # Limit chunks if specified
+        chunks_to_display = sentences[:max_chunks] if max_chunks else sentences
+
+        idx = 0
+        for chunk_idx, sentence_list in enumerate(chunks_to_display):
+            html_parts.append(
+                f"<div style='margin-bottom: 20px; padding: 15px; background-color: {chunk_bg}; border-left: 4px solid {chunk_border};'>"
+            )
+            html_parts.append(
+                f"<div style='font-weight: bold; color: {chunk_header_color}; margin-bottom: 10px;'>Chunk {chunk_idx + 1}</div>"
+            )
+            html_parts.append("<div>")
+
+            for sentence in sentence_list:
+                sentence_text = sentence.text.strip()
+                if mask[idx] == 1:
+                    html_parts.append(
+                        f"<span style='background-color: {highlight_bg}; color: {highlight_text}; padding: 2px 0;'>{sentence_text}</span> "
+                    )
+                else:
+                    html_parts.append(f"<span>{sentence_text}</span> ")
+                idx += 1
+
+            html_parts.append("</div>")
+            html_parts.append("</div>")
+
+        # Skip remaining sentences if max_chunks was specified
+        if max_chunks and len(sentences) > max_chunks:
+            idx += sum(len(chunk) for chunk in sentences[max_chunks:])
+            html_parts.append(
+                f"<p style='color: #666; font-style: italic;'>... {len(sentences) - max_chunks} more chunks not displayed</p>"
+            )
+
+        html_parts.append("</div>")
+
+        return HTML("\n".join(html_parts))
+
+    @staticmethod
     def export_highlighted_text(
         sentences: list[list[Any]],
         mask: np.ndarray,
         output_path: str,
         title: str = "Sentence Mapping Results",
+        dark_mode: bool = False,
     ) -> None:
         """Export text with highlighted selected sentences to an HTML file.
 
@@ -198,7 +285,30 @@ class SentenceMapperVisualizer:
             mask: Binary mask indicating selected sentences (1 = selected, 0 = not selected)
             output_path: Path to save the output file (should end with .html or .md)
             title: Title for the document (default: "Sentence Mapping Results")
+            dark_mode: Use dark theme styling (default: False)
         """
+        # Define theme colors and styles
+        if dark_mode:
+            body_bg = "#1e1e1e"
+            body_color = "#e0e0e0"
+            h1_color = "#4fc3f7"
+            h1_border = "#4fc3f7"
+            highlight_bg = "#ffd700"
+            highlight_color = "#000"
+            chunk_bg = "#2d2d2d"
+            chunk_border = "#555"
+            chunk_header_color = "#9e9e9e"
+        else:
+            body_bg = "#fff"
+            body_color = "#000"
+            h1_color = "#333"
+            h1_border = "#333"
+            highlight_bg = "#ffff00"
+            highlight_color = "#000"
+            chunk_bg = "#f9f9f9"
+            chunk_border = "#ddd"
+            chunk_header_color = "#666"
+
         html_parts = [
             "<!DOCTYPE html>",
             "<html>",
@@ -206,12 +316,12 @@ class SentenceMapperVisualizer:
             "    <meta charset='UTF-8'>",
             f"    <title>{title}</title>",
             "    <style>",
-            "        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; }",
-            "        h1 { color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }",
-            "        .highlight { background-color: #ffff00; padding: 2px 0; }",
+            f"        body {{ font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; background-color: {body_bg}; color: {body_color}; }}",
+            f"        h1 {{ color: {h1_color}; border-bottom: 2px solid {h1_border}; padding-bottom: 10px; }}",
+            f"        .highlight {{ background-color: {highlight_bg}; color: {highlight_color}; padding: 2px 0; }}",
             "        .sentence { display: inline; }",
-            "        .chunk { margin-bottom: 20px; padding: 15px; background-color: #f9f9f9; border-left: 4px solid #ddd; }",
-            "        .chunk-header { font-weight: bold; color: #666; margin-bottom: 10px; }",
+            f"        .chunk {{ margin-bottom: 20px; padding: 15px; background-color: {chunk_bg}; border-left: 4px solid {chunk_border}; }}",
+            f"        .chunk-header {{ font-weight: bold; color: {chunk_header_color}; margin-bottom: 10px; }}",
             "    </style>",
             "</head>",
             "<body>",
@@ -335,7 +445,7 @@ class SentenceMapperVisualizer:
             ratio_frontier,
             "b--",
             linewidth=2,
-            label=f"Frontier (R²={info['r_squared']:.3f})",
+            label="Sentence Frontier",
         )
 
         # Plot frontier points if available
@@ -491,7 +601,7 @@ class SentenceMapperVisualizer:
             # Truncate sentence for display
             truncated = sentence[:100] + "..." if len(sentence) > 100 else sentence
             return (
-                f"<b>Sentence:</b> {truncated}<br>"
+                f"{truncated}<br>"
                 f"<b>Similarity:</b> {sim:.4f}<br>"
                 f"<b>Ratio:</b> {ratio:.4f}<br>"
                 f"<b>Residual:</b> {residual:.4f}"
@@ -506,9 +616,9 @@ class SentenceMapperVisualizer:
                     ratio_plot[~below_frontier],
                     residuals[~below_frontier],
                     [
-                        sentences_plot[i]
-                        for i, bf in enumerate(below_frontier)
-                        if not bf
+                        sent
+                        for sent, above in zip(sentences_plot, ~below_frontier)
+                        if above
                     ],
                 )
             ]
@@ -532,7 +642,11 @@ class SentenceMapperVisualizer:
                     sim_plot[below_frontier],
                     ratio_plot[below_frontier],
                     residuals[below_frontier],
-                    [sentences_plot[i] for i, bf in enumerate(below_frontier) if bf],
+                    [
+                        sent
+                        for sent, below in zip(sentences_plot, below_frontier)
+                        if below
+                    ],
                 )
             ]
             fig.add_trace(
@@ -562,7 +676,7 @@ class SentenceMapperVisualizer:
                 y=ratio_frontier,
                 mode="lines",
                 line=dict(color="blue", width=2, dash="dash"),
-                name=f"Frontier (R²={info['r_squared']:.3f})",
+                name="Sentence Frontier",
                 hoverinfo="skip",
             )
         )
