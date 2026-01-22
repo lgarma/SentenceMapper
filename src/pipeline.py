@@ -104,7 +104,7 @@ class SentenceMapperPipeline:
         slope, intercept, _ = fit_frontier_curve(
             features["all_similarities"],
             features["ratios"],
-            quantile=0.95,
+            quantile=0.05,
             method=fit_method,
         )
 

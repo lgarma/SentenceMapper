@@ -15,11 +15,12 @@ The idea is simple, we can evaluate sentences in two dimensions:
 The similarity between a sentence and its parent chunk naturally increases as there is more word overlap. Longer sentences (higher ratio) tend to have higher similarity simply because they share more content with the chunk. We can model this relation as a power law.
 
 ```
-ratio = A × similarity^B
+similarity = A × ratio^B
 ```
 
+where ratio is the independent variable (sentence length / chunk length) and similarity is the dependent variable.
 
-Sentences that fall **below** this power-law relation are more information-dense than expected for their length. These sentences achieve high semantic similarity to their parent chunk while using fewer words—they pack more meaning per token.
+We fit this relationship to a **lower quantile** (5th percentile by default) of the data to establish a baseline representing the minimum expected similarity. Sentences that fall **above** this baseline have higher similarity than the lower bound for their length—indicating they are more information-dense and pack more meaning per token.
 
 Using the residual between the expected value and the actual value, is easy to solve precisely which are the most informative sentences until we reach an objective number of tokens, or an objective percentage of the document.
 
@@ -91,18 +92,18 @@ visualizer.plot_similarity_vs_ratio(
 The optimizer fits a **power-law frontier** in log-log space using linear regression:
 
 ```
-log(ratio) = B × log(similarity) + log(A)
+log(similarity) = B × log(ratio) + log(A)
 ```
 
 Where:
-- **B (slope)**: The natural scaling exponent between similarity and ratio
-- **A (amplitude)**: Controls the frontier position—lowering A selects fewer sentences
+- **B (slope)**: The natural scaling exponent between ratio and similarity
+- **A (amplitude)**: Controls the threshold position—increasing A selects fewer sentences
 
 ### Optimization Process
 
-1. **Fit the frontier**: Identify the upper envelope of the similarity-ratio distribution using quantile regression (95th percentile) or binned maximum values
-2. **Adjust amplitude**: A bisection algorithm finds the optimal amplitude `A` that yields the target percentage of tokens
-3. **Select sentences**: All sentences below the adjusted power-law curve are selected
+1. **Fit the frontier**: Identify the lower bound (5th percentile by default) of the ratio-similarity distribution to establish the minimum expected relationship
+2. **Adjust amplitude**: A bisection algorithm finds the optimal amplitude `A` that yields the target percentage of tokens by raising the threshold curve above the baseline
+3. **Select sentences**: All sentences above the adjusted threshold curve are selected
 
 <!-- TODO: Add plot showing how the frontier shifts during optimization -->
 

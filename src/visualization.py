@@ -99,26 +99,24 @@ class SentenceMapperVisualizer:
             if x_opts is not None:
                 for idx, x in enumerate(x_opts):
                     amplitude, slope = self.optimizer.get_params(x)
-                    sim_clipped = np.maximum(
-                        similarities, self.optimizer.min_similarity
-                    )
-                    threshold_ratios = self.optimizer.powerlaw(
-                        sim_clipped, amplitude, slope
+                    ratio_clipped = np.maximum(ratios, self.optimizer.min_ratio)
+                    threshold_similarities = self.optimizer.powerlaw(
+                        ratio_clipped, amplitude, slope
                     )
 
-                    below_curve = ratios <= threshold_ratios
+                    above_curve = similarities >= threshold_similarities
 
                     # Assign color only if not already assigned (first curve wins)
                     unassigned = point_colors == -1
-                    point_colors[below_curve & unassigned] = idx
+                    point_colors[above_curve & unassigned] = idx
 
             # Plot points by color
-            # First, plot unassigned points (not below any curve)
+            # First, plot unassigned points (not above any curve)
             unassigned_mask = point_colors == -1
             if np.any(unassigned_mask):
                 plt.scatter(
-                    similarities[unassigned_mask],
                     ratios[unassigned_mask],
+                    similarities[unassigned_mask],
                     alpha=0.2,
                     color="gray",
                     label="Not Selected",
@@ -132,8 +130,8 @@ class SentenceMapperVisualizer:
 
                 if np.any(assigned_to_this):
                     plt.scatter(
-                        similarities[assigned_to_this],
                         ratios[assigned_to_this],
+                        similarities[assigned_to_this],
                         color=color,
                         alpha=0.5,
                         s=20,
@@ -141,13 +139,13 @@ class SentenceMapperVisualizer:
 
             # Plot threshold curves
             if x_opts is not None:
-                sim_range = np.linspace(0.001, 1, 1000)
+                ratio_range = np.linspace(0.001, 1, 1000)
                 for idx, x in enumerate(x_opts):
                     amplitude, slope = self.optimizer.get_params(x)
-                    sim_range_clipped = np.maximum(
-                        sim_range, self.optimizer.min_similarity
+                    ratio_range_clipped = np.maximum(
+                        ratio_range, self.optimizer.min_ratio
                     )
-                    y = self.optimizer.powerlaw(sim_range_clipped, amplitude, slope)
+                    y = self.optimizer.powerlaw(ratio_range_clipped, amplitude, slope)
 
                     color = colors[idx % len(colors)]
 
@@ -158,7 +156,7 @@ class SentenceMapperVisualizer:
                         curve_label = f"Threshold ({x:.1%})"
 
                     plt.plot(
-                        sim_range,
+                        ratio_range,
                         y,
                         color=color,
                         linewidth=2,
@@ -167,10 +165,10 @@ class SentenceMapperVisualizer:
                     )
 
         else:
-            plt.scatter(similarities, ratios, alpha=0.5, s=20)
+            plt.scatter(ratios, similarities, alpha=0.5, s=20)
 
-        plt.xlabel("Cosine Similarity to Chunk")
-        plt.ylabel("Sentence to Chunk Length Ratio")
+        plt.xlabel("Sentence to Chunk Length Ratio")
+        plt.ylabel("Cosine Similarity to Chunk")
         plt.title(title)
 
         if masks is not None:
@@ -405,56 +403,58 @@ class SentenceMapperVisualizer:
         sim_plot = similarities[valid_mask]
         ratio_plot = ratios[valid_mask]
 
-        # Calculate residuals (distance below frontier)
-        log_sim = np.log10(sim_plot)
+        # Calculate residuals (distance above frontier)
         log_ratio = np.log10(ratio_plot)
-        expected_log_ratio = slope * log_sim + intercept
-        residuals = log_ratio - expected_log_ratio  # Negative = below frontier
+        log_sim = np.log10(sim_plot)
+        expected_log_sim = slope * log_ratio + intercept
+        residuals = log_sim - expected_log_sim  # Positive = above frontier
 
-        # Separate points: below frontier (colored by residual) vs above frontier (grey)
-        below_frontier = residuals <= 0
+        # Separate points: above frontier (colored by residual) vs below frontier (grey)
+        above_frontier = residuals >= 0
 
-        # Plot points above the frontier in grey
-        if np.any(~below_frontier):
+        # Plot points below the frontier in grey
+        if np.any(~above_frontier):
             plt.scatter(
-                sim_plot[~below_frontier],
-                ratio_plot[~below_frontier],
+                ratio_plot[~above_frontier],
+                sim_plot[~above_frontier],
                 color="lightgrey",
                 alpha=0.3,
                 s=20,
-                label=None,  # "Above Frontier",
+                label=None,  # "Below Frontier",
             )
 
-        # Plot points below the frontier, colored by residual
-        if np.any(below_frontier):
+        # Plot points above the frontier, colored by residual
+        if np.any(above_frontier):
             scatter = plt.scatter(
-                sim_plot[below_frontier],
-                ratio_plot[below_frontier],
-                c=residuals[below_frontier],
-                cmap="RdYlGn_r",  # Red = at frontier, Green = well below
+                ratio_plot[above_frontier],
+                sim_plot[above_frontier],
+                c=residuals[above_frontier],
+                cmap="RdYlGn",  # Red = at frontier, Green = well above
                 alpha=0.6,
                 s=20,
             )
             plt.colorbar(scatter, label="Residual (log scale)")
 
         # Plot frontier line
-        sim_range = np.logspace(np.log10(sim_plot.min()), np.log10(sim_plot.max()), 100)
-        ratio_frontier = 10 ** (slope * np.log10(sim_range) + intercept)
+        ratio_range = np.logspace(
+            np.log10(ratio_plot.min()), np.log10(ratio_plot.max()), 100
+        )
+        sim_frontier = 10 ** (slope * np.log10(ratio_range) + intercept)
         plt.plot(
-            sim_range,
-            ratio_frontier,
+            ratio_range,
+            sim_frontier,
             "b--",
             linewidth=2,
             label="Sentence Frontier",
         )
 
         # Plot frontier points if available
-        if info.get("frontier_sim") is not None:
-            frontier_sim_orig = 10 ** info["frontier_sim"]
+        if info.get("frontier_ratio") is not None:
             frontier_ratio_orig = 10 ** info["frontier_ratio"]
+            frontier_sim_orig = 10 ** info["frontier_sim"]
             plt.scatter(
-                frontier_sim_orig,
                 frontier_ratio_orig,
+                frontier_sim_orig,
                 color="blue",
                 s=50,
                 marker="x",
@@ -490,19 +490,19 @@ class SentenceMapperVisualizer:
             ]
 
             # Plot each threshold curve
-            sim_curve_range = np.linspace(0.001, 1, 1000)
+            ratio_curve_range = np.linspace(0.001, 1, 1000)
             for idx, x in enumerate(x_opts):
                 amplitude, curve_slope = self.optimizer.get_params(x)
-                sim_range_clipped = np.maximum(
-                    sim_curve_range, self.optimizer.min_similarity
+                ratio_range_clipped = np.maximum(
+                    ratio_curve_range, self.optimizer.min_ratio
                 )
-                y = self.optimizer.powerlaw(sim_range_clipped, amplitude, curve_slope)
+                y = self.optimizer.powerlaw(ratio_range_clipped, amplitude, curve_slope)
 
                 color = colors[idx % len(colors)]
 
                 # Filter out zeros for log scale
                 valid_curve = y > 0
-                sim_curve = sim_curve_range[valid_curve]
+                ratio_curve = ratio_curve_range[valid_curve]
                 y_curve = y[valid_curve]
 
                 # Determine curve label
@@ -512,7 +512,7 @@ class SentenceMapperVisualizer:
                     curve_label = f"Threshold ({x:.1%})"
 
                 plt.plot(
-                    sim_curve,
+                    ratio_curve,
                     y_curve,
                     color=color,
                     linewidth=2,
@@ -522,10 +522,10 @@ class SentenceMapperVisualizer:
 
         plt.xscale("log")
         plt.yscale("log")
-        plt.xlim(np.min(sim_plot) * 0.9, np.max(sim_plot) * 1.1)
-        plt.ylim(np.min(ratio_plot) * 0.9, np.max(ratio_plot) * 1.1)
-        plt.xlabel("Cosine Similarity to Chunk (log scale)")
-        plt.ylabel("Sentence to Chunk Length Ratio (log scale)")
+        plt.xlim(np.min(ratio_plot) * 0.9, np.max(ratio_plot) * 1.1)
+        plt.ylim(np.min(sim_plot) * 0.9, np.max(sim_plot) * 1.1)
+        plt.xlabel("Sentence to Chunk Length Ratio (log scale)")
+        plt.ylabel("Cosine Similarity to Chunk (log scale)")
         plt.title(f"{title}")
         plt.legend(frameon=True)
         plt.grid(True, alpha=0.3, which="both")
@@ -587,93 +587,95 @@ class SentenceMapperVisualizer:
         else:
             sentences_plot = [f"Sentence {i}" for i in range(len(sim_plot))]
 
-        # Calculate residuals (distance below frontier)
-        log_sim = np.log10(sim_plot)
+        # Calculate residuals (distance above frontier)
         log_ratio = np.log10(ratio_plot)
-        expected_log_ratio = slope * log_sim + intercept
-        residuals = log_ratio - expected_log_ratio  # Negative = below frontier
+        log_sim = np.log10(sim_plot)
+        expected_log_sim = slope * log_ratio + intercept
+        residuals = log_sim - expected_log_sim  # Positive = above frontier
 
-        # Separate points: below frontier vs above frontier
-        below_frontier = residuals <= 0
+        # Separate points: above frontier vs below frontier
+        above_frontier = residuals >= 0
 
         # Create hover text
-        def make_hover_text(sim, ratio, residual, sentence):
+        def make_hover_text(ratio, sim, residual, sentence):
             # Truncate sentence for display
             truncated = sentence[:100] + "..." if len(sentence) > 100 else sentence
             return (
                 f"{truncated}<br>"
-                f"<b>Similarity:</b> {sim:.4f}<br>"
                 f"<b>Ratio:</b> {ratio:.4f}<br>"
+                f"<b>Similarity:</b> {sim:.4f}<br>"
                 f"<b>Residual:</b> {residual:.4f}"
             )
 
-        # Plot points above the frontier in grey
-        if np.any(~below_frontier):
-            hover_texts_above = [
-                make_hover_text(s, r, res, sent)
-                for s, r, res, sent in zip(
-                    sim_plot[~below_frontier],
-                    ratio_plot[~below_frontier],
-                    residuals[~below_frontier],
-                    [
-                        sent
-                        for sent, above in zip(sentences_plot, ~below_frontier)
-                        if above
-                    ],
-                )
-            ]
-            fig.add_trace(
-                go.Scatter(
-                    x=sim_plot[~below_frontier],
-                    y=ratio_plot[~below_frontier],
-                    mode="markers",
-                    marker=dict(color="lightgrey", size=8, opacity=0.5),
-                    name="Above Frontier",
-                    hovertemplate="%{customdata}<extra></extra>",
-                    customdata=hover_texts_above,
-                )
-            )
-
-        # Plot points below the frontier, colored by residual
-        if np.any(below_frontier):
+        # Plot points below the frontier in grey
+        if np.any(~above_frontier):
             hover_texts_below = [
-                make_hover_text(s, r, res, sent)
-                for s, r, res, sent in zip(
-                    sim_plot[below_frontier],
-                    ratio_plot[below_frontier],
-                    residuals[below_frontier],
+                make_hover_text(r, s, res, sent)
+                for r, s, res, sent in zip(
+                    ratio_plot[~above_frontier],
+                    sim_plot[~above_frontier],
+                    residuals[~above_frontier],
                     [
                         sent
-                        for sent, below in zip(sentences_plot, below_frontier)
+                        for sent, below in zip(sentences_plot, ~above_frontier)
                         if below
                     ],
                 )
             ]
             fig.add_trace(
                 go.Scatter(
-                    x=sim_plot[below_frontier],
-                    y=ratio_plot[below_frontier],
+                    x=ratio_plot[~above_frontier],
+                    y=sim_plot[~above_frontier],
                     mode="markers",
-                    marker=dict(
-                        color=residuals[below_frontier],
-                        colorscale="RdYlGn_r",
-                        size=8,
-                        opacity=0.7,
-                        colorbar=dict(title="Residual<br>(log scale)"),
-                    ),
+                    marker=dict(color="lightgrey", size=8, opacity=0.5),
                     name="Below Frontier",
                     hovertemplate="%{customdata}<extra></extra>",
                     customdata=hover_texts_below,
                 )
             )
 
+        # Plot points above the frontier, colored by residual
+        if np.any(above_frontier):
+            hover_texts_above = [
+                make_hover_text(r, s, res, sent)
+                for r, s, res, sent in zip(
+                    ratio_plot[above_frontier],
+                    sim_plot[above_frontier],
+                    residuals[above_frontier],
+                    [
+                        sent
+                        for sent, above in zip(sentences_plot, above_frontier)
+                        if above
+                    ],
+                )
+            ]
+            fig.add_trace(
+                go.Scatter(
+                    x=ratio_plot[above_frontier],
+                    y=sim_plot[above_frontier],
+                    mode="markers",
+                    marker=dict(
+                        color=residuals[above_frontier],
+                        colorscale="RdYlGn",
+                        size=8,
+                        opacity=0.7,
+                        colorbar=dict(title="Residual<br>(log scale)"),
+                    ),
+                    name="Above Frontier",
+                    hovertemplate="%{customdata}<extra></extra>",
+                    customdata=hover_texts_above,
+                )
+            )
+
         # Plot frontier line
-        sim_range = np.logspace(np.log10(sim_plot.min()), np.log10(sim_plot.max()), 100)
-        ratio_frontier = 10 ** (slope * np.log10(sim_range) + intercept)
+        ratio_range = np.logspace(
+            np.log10(ratio_plot.min()), np.log10(ratio_plot.max()), 100
+        )
+        sim_frontier = 10 ** (slope * np.log10(ratio_range) + intercept)
         fig.add_trace(
             go.Scatter(
-                x=sim_range,
-                y=ratio_frontier,
+                x=ratio_range,
+                y=sim_frontier,
                 mode="lines",
                 line=dict(color="blue", width=2, dash="dash"),
                 name="Sentence Frontier",
@@ -682,17 +684,40 @@ class SentenceMapperVisualizer:
         )
 
         # Plot frontier points if available
-        if info.get("frontier_sim") is not None:
-            frontier_sim_orig = 10 ** info["frontier_sim"]
+        if info.get("frontier_ratio") is not None:
             frontier_ratio_orig = 10 ** info["frontier_ratio"]
+            frontier_sim_orig = 10 ** info["frontier_sim"]
+
+            # Find nearest sentences to each frontier point for hover display
+            frontier_hover_texts = []
+            for f_ratio, f_sim in zip(frontier_ratio_orig, frontier_sim_orig):
+                # Calculate distance to all points in log space for better matching
+                distances = np.sqrt(
+                    (np.log10(ratio_plot) - np.log10(f_ratio)) ** 2
+                    + (np.log10(sim_plot) - np.log10(f_sim)) ** 2
+                )
+                nearest_idx = np.argmin(distances)
+                nearest_sentence = sentences_plot[nearest_idx]
+                truncated = (
+                    nearest_sentence[:100] + "..."
+                    if len(nearest_sentence) > 100
+                    else nearest_sentence
+                )
+                frontier_hover_texts.append(
+                    f"<b>Frontier Point</b><br>{truncated}<br>"
+                    f"<b>Ratio:</b> {f_ratio:.4f}<br>"
+                    f"<b>Similarity:</b> {f_sim:.4f}"
+                )
+
             fig.add_trace(
                 go.Scatter(
-                    x=frontier_sim_orig,
-                    y=frontier_ratio_orig,
+                    x=frontier_ratio_orig,
+                    y=frontier_sim_orig,
                     mode="markers",
                     marker=dict(color="blue", size=10, symbol="x"),
                     name="Frontier Points",
-                    hovertemplate="<b>Frontier Point</b><br>Similarity: %{x:.4f}<br>Ratio: %{y:.4f}<extra></extra>",
+                    hovertemplate="%{customdata}<extra></extra>",
+                    customdata=frontier_hover_texts,
                 )
             )
 
@@ -720,18 +745,18 @@ class SentenceMapperVisualizer:
                 "cyan",
             ]
 
-            sim_curve_range = np.linspace(0.001, 1, 1000)
+            ratio_curve_range = np.linspace(0.001, 1, 1000)
             for idx, x in enumerate(x_opts):
                 amplitude, curve_slope = self.optimizer.get_params(x)
-                sim_range_clipped = np.maximum(
-                    sim_curve_range, self.optimizer.min_similarity
+                ratio_range_clipped = np.maximum(
+                    ratio_curve_range, self.optimizer.min_ratio
                 )
-                y = self.optimizer.powerlaw(sim_range_clipped, amplitude, curve_slope)
+                y = self.optimizer.powerlaw(ratio_range_clipped, amplitude, curve_slope)
 
                 color = colors[idx % len(colors)]
 
                 valid_curve = y > 0
-                sim_curve = sim_curve_range[valid_curve]
+                ratio_curve = ratio_curve_range[valid_curve]
                 y_curve = y[valid_curve]
 
                 if label_list is not None:
@@ -741,7 +766,7 @@ class SentenceMapperVisualizer:
 
                 fig.add_trace(
                     go.Scatter(
-                        x=sim_curve,
+                        x=ratio_curve,
                         y=y_curve,
                         mode="lines",
                         line=dict(color=color, width=2),
@@ -754,12 +779,6 @@ class SentenceMapperVisualizer:
         fig.update_layout(
             title=title,
             xaxis=dict(
-                title="Cosine Similarity to Chunk (log scale)",
-                type="log",
-                range=[np.log10(sim_plot.min() * 0.9), np.log10(sim_plot.max() * 1.1)],
-                gridcolor="rgba(128, 128, 128, 0.3)",
-            ),
-            yaxis=dict(
                 title="Sentence to Chunk Length Ratio (log scale)",
                 type="log",
                 range=[
@@ -768,13 +787,22 @@ class SentenceMapperVisualizer:
                 ],
                 gridcolor="rgba(128, 128, 128, 0.3)",
             ),
+            yaxis=dict(
+                title="Cosine Similarity to Chunk (log scale)",
+                type="log",
+                range=[
+                    np.log10(sim_plot.min() * 0.9),
+                    np.log10(sim_plot.max() * 1.1),
+                ],
+                gridcolor="rgba(128, 128, 128, 0.3)",
+            ),
             width=figsize[0],
             height=figsize[1],
             legend=dict(
-                yanchor="top",
-                y=0.99,
-                xanchor="left",
-                x=0.01,
+                yanchor="bottom",
+                y=0.01,
+                xanchor="right",
+                x=0.99,
                 bgcolor="rgba(255, 255, 255, 0.8)",
             ),
             hovermode="closest",

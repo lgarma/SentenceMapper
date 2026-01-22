@@ -8,36 +8,37 @@ from sklearn.linear_model import LinearRegression
 class PowerLawOptimizer:
     """Optimizer that uses a power law frontier to select information-dense sentences.
 
-    The power law relationship is: ratio = A * similarity^B
+    The power law relationship is: similarity = A * ratio^B
     Where:
+    - ratio is the independent variable (sentence length / chunk length)
     - B (slope) is fixed and represents the natural scaling relationship
     - A (amplitude) is adjusted to select more or fewer sentences
 
-    Sentences BELOW the power law curve are selected (information-dense).
+    Sentences ABOVE the power law curve are selected (information-dense).
     """
 
     def __init__(
-        self, slope: float = 1.0, intercept: float = 0.0, min_similarity: float = 0.01
+        self, slope: float = 1.0, intercept: float = 0.0, min_ratio: float = 0.01
     ):
         """Initialize the optimizer.
 
         Args:
             slope: Fixed power law exponent (default: 1.0)
-                   Higher values = steeper relationship between similarity and ratio
+                   Higher values = steeper relationship between ratio and similarity
             intercept: Initial intercept from fitted frontier in log-log space (default: 0.0)
-                      From the log-log linear regression: log(ratio) = slope * log(sim) + intercept
-            min_similarity: Minimum similarity threshold to avoid numerical issues (default: 0.01)
+                      From the log-log linear regression: log(similarity) = slope * log(ratio) + intercept
+            min_ratio: Minimum ratio threshold to avoid numerical issues (default: 0.01)
         """
         self.slope = slope
         self.initial_intercept = intercept
-        self.min_similarity = min_similarity
+        self.min_ratio = min_ratio
 
     def get_params(self, x: float) -> tuple[float, float]:
         """Get parameters for power law function based on input x.
 
-        When x=0, the intercept equals the initial fitted frontier value.
-        When x=1, the intercept is moved down significantly to select fewer sentences.
-        The intercept moves down as x increases while slope remains fixed.
+        When x=0, the intercept equals the initial fitted baseline value.
+        When x=1, the intercept is moved up significantly to select fewer sentences.
+        The intercept moves up as x increases while slope remains fixed.
 
         Args:
             x: Optimization parameter between 0 and 1
@@ -45,10 +46,10 @@ class PowerLawOptimizer:
         Returns:
             Tuple of (amplitude, slope) parameters
         """
-        # Move intercept down as x increases
-        # At x=0: intercept = initial_intercept (frontier)
-        # At x=1: intercept is reduced by ~3 orders of magnitude in log space
-        intercept = self.initial_intercept - 3 * x
+        # Move intercept UP as x increases (to select fewer sentences)
+        # At x=0: intercept = initial_intercept (baseline - about 50% selected)
+        # At x=1: intercept is increased by ~3 orders of magnitude in log space
+        intercept = self.initial_intercept + 3 * x
 
         # Convert intercept to amplitude: amplitude = 10^intercept
         amplitude = 10**intercept
@@ -57,19 +58,19 @@ class PowerLawOptimizer:
 
     @staticmethod
     def powerlaw(
-        similarity: float | np.ndarray, amplitude: float, slope: float
+        ratio: float | np.ndarray, amplitude: float, slope: float
     ) -> float | np.ndarray:
-        """Power law function: ratio = amplitude * similarity^slope.
+        """Power law function: similarity = amplitude * ratio^slope.
 
         Args:
-            similarity: Input similarity value(s)
+            ratio: Input ratio value(s) (sentence length / chunk length)
             amplitude: Scaling factor (intercept in log-log space)
             slope: Power law exponent
 
         Returns:
-            Expected ratio threshold for given similarity
+            Expected similarity threshold for given ratio
         """
-        return amplitude * np.power(similarity, slope)
+        return amplitude * np.power(ratio, slope)
 
     def optimize_powerlaw(
         self,
@@ -95,13 +96,13 @@ class PowerLawOptimizer:
         """
         amplitude, slope = self.get_params(x)
 
-        # Calculate threshold ratio for each similarity
-        # Clip similarities to avoid numerical issues with very small values
-        sim_clipped = np.maximum(similarities, self.min_similarity)
-        threshold_ratios = self.powerlaw(sim_clipped, amplitude, slope)
+        # Calculate threshold similarity for each ratio
+        # Clip ratios to avoid numerical issues with very small values
+        ratio_clipped = np.maximum(ratios, self.min_ratio)
+        threshold_similarities = self.powerlaw(ratio_clipped, amplitude, slope)
 
-        # Select sentences below the power law curve
-        mask = ratios <= threshold_ratios
+        # Select sentences above the power law curve
+        mask = similarities >= threshold_similarities
         current_tokens = np.sum(tokens * mask)
 
         return current_tokens - objective_tokens
@@ -115,7 +116,7 @@ class PowerLawOptimizer:
     ) -> tuple[np.ndarray, float]:
         """Filter sentences to achieve a target percentage of total tokens.
 
-        Sentences BELOW the power law frontier are considered information-dense
+        Sentences ABOVE the power law frontier are considered information-dense
         and are selected.
 
         Args:
@@ -163,9 +164,9 @@ class PowerLawOptimizer:
 
         # Generate final mask with optimal x
         amplitude, slope = self.get_params(x_opt)
-        sim_clipped = np.maximum(similarities, self.min_similarity)
-        threshold_ratios = self.powerlaw(sim_clipped, amplitude, slope)
-        mask = (ratios <= threshold_ratios).astype(int)
+        ratio_clipped = np.maximum(ratios, self.min_ratio)
+        threshold_similarities = self.powerlaw(ratio_clipped, amplitude, slope)
+        mask = (similarities >= threshold_similarities).astype(int)
 
         return mask, x_opt
 
@@ -173,32 +174,32 @@ class PowerLawOptimizer:
 def fit_frontier_curve(
     similarities: np.ndarray,
     ratios: np.ndarray,
-    quantile: float = 0.95,
-    method: str = "quantile",
+    quantile: float = 0.05,
+    method: str = "binned_min",
     n_bins: int = 20,
     min_points_per_bin: int = 5,
 ) -> tuple[float, float, dict]:
-    """Fit a linear function to the frontier (upper envelope) in log-log space.
+    """Fit a linear function to the baseline relationship in log-log space.
 
-    This identifies the "expected" similarity-length relationship. Sentences below
-    this frontier are more information-dense than expected for their length.
+    This identifies the lower-bound ratio-similarity relationship. Sentences above
+    this baseline have higher similarity than the minimum expected for their length.
 
     Args:
         similarities: Array of cosine similarities
         ratios: Array of sentence-to-chunk length ratios
-        quantile: Quantile to use for frontier (default: 0.95, i.e., 95th percentile)
-        method: Method to use ('quantile' or 'binned_max')
+        quantile: Quantile to use for baseline (default: 0.05, i.e., 5th percentile)
+        method: Method to use ('quantile' or 'binned_min')
             - 'quantile': Quantile regression on all points
-            - 'binned_max': Fit to maximum values in binned ranges
-        n_bins: Number of bins for 'binned_max' method
-        min_points_per_bin: Minimum points per bin for 'binned_max' method
+            - 'binned_min': Fit to low quantile values in binned ranges (recommended)
+        n_bins: Number of bins for 'binned_min' method
+        min_points_per_bin: Minimum points per bin for 'binned_min' method
 
     Returns:
         slope: Slope of the line in log-log space (power law exponent)
         intercept: Intercept of the line in log-log space
         info: Dictionary with additional information:
-            - 'log_sim': Log-transformed similarities used for fitting
-            - 'log_ratio': Log-transformed ratios used for fitting
+            - 'log_ratio': Log-transformed ratios used for fitting (X-axis)
+            - 'log_sim': Log-transformed similarities used for fitting (Y-axis)
             - 'equation': String representation of the fitted equation
             - 'r_squared': R² value of the fit
     """
@@ -208,32 +209,32 @@ def fit_frontier_curve(
     ratio_valid = ratios[valid_mask]
 
     # Log transform
-    log_sim = np.log10(sim_valid)
     log_ratio = np.log10(ratio_valid)
+    log_sim = np.log10(sim_valid)
 
     if method == "quantile":
-        # Fit to the upper quantile (frontier)
+        # Fit to the specified quantile (default: median/lower bound)
         # We'll use a sliding window approach to estimate the quantile frontier
-        sort_idx = np.argsort(log_sim)
-        log_sim_sorted = log_sim[sort_idx]
+        sort_idx = np.argsort(log_ratio)
         log_ratio_sorted = log_ratio[sort_idx]
+        log_sim_sorted = log_sim[sort_idx]
 
         # Calculate rolling quantile
-        window_size = max(len(log_sim) // 20, 10)
-        frontier_sim = []
+        window_size = max(len(log_ratio) // 20, 10)
         frontier_ratio = []
+        frontier_sim = []
 
-        for i in range(0, len(log_sim_sorted) - window_size, window_size // 2):
-            window_ratios = log_ratio_sorted[i : i + window_size]
-            frontier_ratio.append(np.quantile(window_ratios, quantile))
-            frontier_sim.append(np.median(log_sim_sorted[i : i + window_size]))
+        for i in range(0, len(log_ratio_sorted) - window_size, window_size // 2):
+            window_sims = log_sim_sorted[i : i + window_size]
+            frontier_sim.append(np.quantile(window_sims, quantile))
+            frontier_ratio.append(np.median(log_ratio_sorted[i : i + window_size]))
 
-        frontier_sim = np.array(frontier_sim)
         frontier_ratio = np.array(frontier_ratio)
+        frontier_sim = np.array(frontier_sim)
 
         # Fit linear regression to frontier points
-        X = frontier_sim.reshape(-1, 1)
-        y = frontier_ratio
+        X = frontier_ratio.reshape(-1, 1)
+        y = frontier_sim
         model = LinearRegression()
         model.fit(X, y)
         slope = model.coef_[0]
@@ -245,26 +246,26 @@ def fit_frontier_curve(
         ss_tot = np.sum((y - np.mean(y)) ** 2)
         r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
-    elif method == "binned_max":
-        # Divide similarity range into bins and take max ratio in each bin
-        bins = np.linspace(log_sim.min(), log_sim.max(), n_bins + 1)
-        bin_indices = np.digitize(log_sim, bins)
+    elif method == "binned_min":
+        # Divide ratio range into bins and take minimum similarity in each bin
+        bins = np.linspace(log_ratio.min(), log_ratio.max(), n_bins + 1)
+        bin_indices = np.digitize(log_ratio, bins)
 
-        frontier_sim = []
         frontier_ratio = []
+        frontier_sim = []
 
         for i in range(1, n_bins + 1):
             mask = bin_indices == i
             if np.sum(mask) >= min_points_per_bin:
-                frontier_sim.append(log_sim[mask].mean())
-                frontier_ratio.append(log_ratio[mask].max())
+                frontier_ratio.append(log_ratio[mask].mean())
+                frontier_sim.append(log_sim[mask].min())
 
-        frontier_sim = np.array(frontier_sim)
         frontier_ratio = np.array(frontier_ratio)
+        frontier_sim = np.array(frontier_sim)
 
         # Fit linear regression to frontier points
-        X = frontier_sim.reshape(-1, 1)
-        y = frontier_ratio
+        X = frontier_ratio.reshape(-1, 1)
+        y = frontier_sim
         model = LinearRegression()
         model.fit(X, y)
         slope = model.coef_[0]
@@ -277,20 +278,20 @@ def fit_frontier_curve(
         r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
     else:
-        raise ValueError(f"Unknown method: {method}. Use 'quantile' or 'binned_max'")
+        raise ValueError(f"Unknown method: {method}. Use 'quantile' or 'binned_min'")
 
     # Create equation string
-    # In log-log space: log(ratio) = slope * log(sim) + intercept
-    # In original space: ratio = 10^intercept * sim^slope
-    equation = f"ratio = {10**intercept:.4e} * similarity^{slope:.3f}"
+    # In log-log space: log(similarity) = slope * log(ratio) + intercept
+    # In original space: similarity = 10^intercept * ratio^slope
+    equation = f"similarity = {10**intercept:.4e} * ratio^{slope:.3f}"
 
     info = {
-        "log_sim": log_sim,
         "log_ratio": log_ratio,
+        "log_sim": log_sim,
         "equation": equation,
         "r_squared": r_squared,
-        "frontier_sim": frontier_sim,
         "frontier_ratio": frontier_ratio,
+        "frontier_sim": frontier_sim,
     }
 
     return slope, intercept, info
