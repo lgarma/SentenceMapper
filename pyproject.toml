@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "chonkie>=1.5.2",
+    "datasets>=4.5.0",
     "jupyter>=1.1.1",
     "langchain-community>=0.3.29",
     "matplotlib>=3.10.8",
