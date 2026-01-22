@@ -1,47 +1,50 @@
 # Sentence Mapper
 
-**Extract high-density informative sentences from large documents using embedding-based optimization.**
+**Extractive summarization for large documetns based on information-density.**
 
-## Overview
+## Identifing information-dense sentences
 
-Sentence Mapper provides an intelligent approach to extractive summarization for large documents. Instead of processing entire documents, it identifies and extracts the most information-dense sentences by analyzing the relationship between sentence embeddings and their surrounding context.
+The idea is simple, we can evaluate sentences in two dimensions:
 
-## The Problem
+- How well does the sentence represent the surrounding context.
+- How short is the sentence relative to its chunk.
 
-Most NLP benchmarks focus on short texts (a few hundred words), but efficient summarization of large documents remains challenging. Traditional map-reduce approaches split documents into chunks that fit LLM context windows, but processing all chunks is token-intensive and slow.
+**Heuristic:** The best sentences are those that can capture most semantic meaning in the shortest amount of tokens. 
 
-## Sentence Mapper
 
-Sentence Mapper proposes an **embedding-based extractive summarization** technique for the mapping step:
-
-1. **Document Chunking**: Splits documents into chunks
-2. **Embedding Analysis**: Computes embeddings for both chunks and individual sentences
-3. **Similarity & Ratio Scoring**: Calculates cosine similarity between sentences and their parent chunks, plus sentence-to-chunk length ratios
-4. **Power-Law Filtering**: Uses a power-law frontier to identify and select information-dense sentences
-
-### The Power-Law Frontier
-
-The similarity between a sentence and its parent chunk naturally increases as there is more word overlap—longer sentences (higher ratio) tend to have higher similarity simply because they share more content with the chunk.
-
-When plotting similarity vs. ratio in **log-log space**, this relationship follows a clear **power law**:
+The similarity between a sentence and its parent chunk naturally increases as there is more word overlap. Longer sentences (higher ratio) tend to have higher similarity simply because they share more content with the chunk. We can model this relation as a power law.
 
 ```
 ratio = A × similarity^B
 ```
 
+
+Sentences that fall **below** this power-law relation are more information-dense than expected for their length. These sentences achieve high semantic similarity to their parent chunk while using fewer words—they pack more meaning per token.
+
+Using the residual between the expected value and the actual value, is easy to solve precisely which are the most informative sentences until we reach an objective number of tokens, or an objective percentage of the document.
+
 <!-- TODO: Add plot showing similarity vs ratio in log-log space with fitted power law -->
 
-We fit this frontier using either:
-- **Quantile method (95th percentile)**: Captures the upper envelope of the data
-- **Binned max method**: Fits to maximum values within binned similarity ranges
+SentenceMapper is inspired by PatternRank (Schopf et al. 2022)[https://arxiv.org/pdf/2210.05245], a technique used to extract keyphrases using embeddings + Part of Speech patterns. Keyphrases are ranked based on their similarity to the input text.
 
-### Information-Dense Sentences
 
-Sentences that fall **below** this power-law frontier are more information-dense than expected for their length. These sentences achieve high semantic similarity to their parent chunk while using fewer words—they pack more meaning per token.
 
-<!-- TODO: Add plot highlighting sentences below the frontier as selected -->
+## Map - Reduce Summarization
 
-The algorithm targets these below-frontier sentences to extract the most valuable content.
+
+LLMs have difficulties processing large documents. Self-Attention is quadratic, and ...
+
+One way to summarize large documents is map-reduce, which consist of spliting large documents into smaller, more manageable chunks that fit LLM context windows. Generate a chunk-level summaries (mapping phase) and aggregate them togheter for a final summary (reduce phase).
+
+This approach is computationally expensive. 
+
+Using SentenceMapper for the mapping phase, is much cheaper and fast. Embeddings computation can be done blazingling fast with Model2Vec models.
+
+LLMs can typically infer missing context from these high-density sentences, significantly reducing:
+- Token consumption (e.g., 5,000 tokens instead of 50,000)
+- Processing latency
+- API costs
+
 
 ## Usage
 
@@ -51,15 +54,15 @@ from src.pipeline import SentenceMapperPipeline
 # Initialize with embedding model
 pipeline = SentenceMapperPipeline(
     embedding_model_name="minishlab/potion-base-8M",
-    chunk_size=2000,
-    chunk_overlap=0
+    chunk_size=2048,
+    min_sentence_lenght=256
 )
 
 # Process document without filtering
 result = pipeline.process_document(text)
 
 # Or optimize to a target percentage (e.g., 20% of original tokens)
-result = pipeline.process_document(text, objective_percentage=0.2)
+result = pipeline.process_document(text, objective_percentage=0.3)
 
 print(f"Selected {result['selected_tokens']} tokens from {sum(result['tokens'])} total")
 print(result['selected_text'])
@@ -83,23 +86,6 @@ visualizer.plot_similarity_vs_ratio(
 )
 ```
 
-<!-- TODO: Add example visualization output -->
-
-## Applications
-
-### Map-Reduce Summarization
-
-Use extracted sentences as input for map-reduce summarization pipelines. LLMs can typically infer missing context from these high-density sentences, significantly reducing:
-- Token consumption (e.g., 5,000 tokens instead of 50,000)
-- Processing latency
-- API costs
-
-### Overview-Guided Summarization
-
-For complex documents additional context can be used to guide the summarization:
-- Combine extracted sentences with a document overview.
-  - Document metadata, table of contents, human annotations, or include the initial pages without modification.
-
 ## How It Works
 
 The optimizer fits a **power-law frontier** in log-log space using linear regression:
@@ -120,33 +106,24 @@ Where:
 
 <!-- TODO: Add plot showing how the frontier shifts during optimization -->
 
-This approach provides a principled way to identify information-dense sentences: those that achieve unexpectedly high similarity given their length.
 
 ## Future Work
 
-### Enhanced Sentence Segmentation
-- Implement a custom sentence chunker with configurable abbreviation handling
-- Support domain-specific tokenization rules (e.g., legal citations, scientific notation)
-- Add flexibility for users to define custom sentence boundary patterns
+### Robust Sentence Selection
+- The current sentence selection is sensitive to the chunking strategy. One sentence could have low similarity to their parent chunk, but high similarity to a neighbour chunk.
+- Using different chunk sizes could make the process more robust.
 
 ### Benchmarking & Evaluation
 - Evaluate extractive summarization quality using ROUGE, BERTScore, and other metrics
 - Benchmark the full map-reduce pipeline against baseline approaches
 - Compare token reduction vs. information retention across different percentage targets
-- Measure performance on standard datasets (GovReport, PubMed, arXiv papers)
+- Measure performance on long summarization datasets (GovReport, Multi-LexSum)
 
 ### Semantic-Biased Extraction
-- Allow users to provide query sentences or keywords that represent their specific interests
+- Allow users to provide query sentences or keywords that represent their specific interests.
 - Compute semantic similarity between each sentence and the user's query
-- Add this similarity as a bias term that shifts sentences rightward in the similarity-ratio space
-- Enable query-focused summarization where relevant sentences are prioritized for selection
-- Support multi-query scenarios with weighted combinations of semantic biases
+- Add this similarity as a bias term that shifts sentences rightward in the similarity-ratio space, increasing the likelihood of being selected.
 
-### Open Research Questions
-- **Universality of the power-law**: Does the similarity-ratio relationship hold across all document types, or is it domain-dependent?
-- **Cross-domain generalization**: How does the method perform on technical documentation, code comments, legal texts, or conversational data?
-- **Code summarization**: Can sentence mapping be adapted to extract high-density lines or blocks from source code?
-- **Optimal frontier fitting**: Which method (quantile vs. binned-max) works best for different document characteristics?
 
 ## Installation
 
