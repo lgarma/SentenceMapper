@@ -24,19 +24,21 @@ The text below consists of key sentences that were algorithmically selected base
 When there is a gap between non-consecutive sentences, it is indicated with the string " (...) ".
 
 # Task
-Synthesize these extracted sentences into a coherent, well-structured summary that accurately reflects the main ideas and important details of the original document.
+
+Synthesize these extracted sentences into a coherent, well-structured summary that accurately reflects the main ideas and important details of the report.
 
 # Guidelines:
+
 - Write in full paragraphs, avoid bullet points or lists.
-- Avoid vague statements like "the document mentions" or "the report discusses".
-- Include data, statistics to support key points where relevant.
-- Prioritize inclusion of specific legislative details:  including bill numbers, actions taken, and outcomes
+- Avoid referring to "the report" or "the document". Focus on summarizing the content directly.
+- Ensure the summary adequately reflects the report’s central research questions, findings, and methodology.
+- Include quantitative data and statistics to support key points.
+- Prioritize inclusion of specific legislative details:  including bill numbers, actions taken, and outcomes.
 
+# Extracted Sentences
 
-EXTRACTED KEY SENTENCES:
 {extracted_text}
-
-SUMMARY:"""
+"""
 
 
 JUDGE_SYSTEM_PROMPT = """You are an expert evaluator specializing in assessing summary quality for long documents.
@@ -59,7 +61,8 @@ def get_llm_judge_prompt(
     """
     return f"""Please evaluate the GENERATED SUMMARY against the REFERENCE SUMMARY and provide a comprehensive analysis.
 
-## Context0
+## Context
+
 The summary bellow was generated using a map-reduce strategy.
 
 In the map phase, key sentences were extracted from the original document based on their information density.
@@ -72,28 +75,29 @@ The document comes from the GovReport dataset, which contains about 19.5k report
 They cover researches on a broad range of national policy issues, including health care, education, national security, economics, and the environment.
 The reference summary is a human-written summary of the same document, and serves as the gold standard for comparison.
 
+We expect the GENERATED SUMMARY to miss some details from the REFERENCE SUMMARY due to the compression.
+We can improve the extraction strategy using a "semantic bias".
+These are a list of keywords or keyphrases that increase the likelihood of sentences containing them to be extracted.
+
 ## Task
 
 Please provide your evaluation in JSON format with the following sections:
 
 {{
-    "strengths": "What aspects of the generated summary work well?",
-    "gaps": "What important information from the reference is missing or under-represented?"
-    "accuracy_concerns": "Are there any inaccuracies, misrepresentations, or misleading statements?",
-    "strategic_recommendations": "High-level guidelines could improve the AI writting for future summaries?",
-    "overall_score": "A score from 1 to 10 indicating the overall quality of the generated summary compared to the reference."
+    "differences": "Breifly describe the main differences between the two summaries",
+    "semantic_bias": "List of keywords that could improve the extraction phase. Avoid being too specific, focus on high-level themes.",
+    "high-level guidance": "Guidance for the Summarizer. Avoid being too specific. The guidance should be useful for other documents in the GovReport dataset.",
+    "overall_score": "A score from 1 to 10 indicating the overall quality of the generated summary."
 }}
-
-Please be specific and cite examples from both summaries where relevant.
 
 ## Summaries
 
-Reference summary (Human-written ground truth):
+Reference summary:
 {reference_summary}
 
 ---
 
-Generated summary (AI-generated using map-reduce strategy):
+Generated summary:
 {generated_summary}
 
 """
