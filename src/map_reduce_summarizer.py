@@ -40,7 +40,6 @@ class MapReduceSummarizer:
         self,
         embedding_model_name: str = "minishlab/potion-base-8M",
         chunk_size: int = 2048,
-        chunk_overlap: int = 0,
         summarize_model: str = "gpt-4o-mini",
         judge_model: str = "gpt-4.1",
         objective_percentage: float = 0.2,
@@ -70,7 +69,6 @@ class MapReduceSummarizer:
         self.pipeline = SentenceMapperPipeline(
             embedding_model_name=embedding_model_name,
             chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
             min_sentence_length=250,
         )
 
