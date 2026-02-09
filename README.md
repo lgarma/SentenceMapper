@@ -7,10 +7,9 @@
 The idea is simple, we can evaluate sentences in two dimensions:
 
 - How well does the sentence represent the surrounding context.
-- How short is the sentence relative to its chunk.
+- How short is the sentence relative to its parent chunk.
 
-**Heuristic:** The best sentences are those that can capture most semantic meaning in the shortest amount of tokens. 
-
+**Main Heuristic:** The best sentences are those that can capture most semantic meaning in the shortest amount of tokens. 
 
 The similarity between a sentence and its parent chunk naturally increases as there is more word overlap. Longer sentences (higher ratio) tend to have higher similarity simply because they share more content with the chunk. We can model this relation as a power law.
 
@@ -18,19 +17,16 @@ The similarity between a sentence and its parent chunk naturally increases as th
 similarity = A × ratio^B
 ```
 
-where ratio is the independent variable (sentence length / chunk length) and similarity is the dependent variable.
+We can fit this relationship by binning the data and selecting the **lower quantile** (5th percentile by default) representing the minimum expected similarity. Sentences **above** this frontier have higher similarity than the expected for their length, indicating they pack more meaning per token.
 
-We fit this relationship to a **lower quantile** (5th percentile by default) of the data to establish a baseline representing the minimum expected similarity. Sentences that fall **above** this baseline have higher similarity than the lower bound for their length—indicating they are more information-dense and pack more meaning per token.
-
-Using the residual between the expected value and the actual value, is easy to solve precisely which are the most informative sentences until we reach an objective number of tokens, or an objective percentage of the document.
+Using the residual between the expected value and the actual value, is easy to solve precisely which are the most informative sentences. We can set an objective number of tokens, or an objective percentage of the document.
 
 <!-- TODO: Add plot showing similarity vs ratio in log-log space with fitted power law -->
 
 SentenceMapper is inspired by PatternRank (Schopf et al. 2022)[https://arxiv.org/pdf/2210.05245], a technique used to extract keyphrases using embeddings + Part of Speech patterns. Keyphrases are ranked based on their similarity to the input text.
 
 
-
-## Map - Reduce Summarization
+## Use in Map - Reduce Summarization
 
 
 LLMs have difficulties processing large documents. Self-Attention is quadratic, and ...
@@ -108,28 +104,31 @@ Where:
 <!-- TODO: Add plot showing how the frontier shifts during optimization -->
 
 
+## Preliminary Results
+
+<!-- TODO: Add Rouge score of mapping X amount of tokens. -->
+
 ## Future Work
 
 ### Robust Sentence Selection
 - The current sentence selection is sensitive to the chunking strategy. One sentence could have low similarity to their parent chunk, but high similarity to a neighbour chunk.
-- Using different chunk sizes could make the process more robust.
+- Using different chunk sizes or weighting similarity with neighbors could make the process more robust.
 
 ### Benchmarking & Evaluation
-- Evaluate extractive summarization quality using ROUGE, BERTScore, and other metrics
+- Evaluate extractive summarization quality using ROUGE and BERTScore on long summarization datasets (GovReport, Multi-LexSum)
 - Benchmark the full map-reduce pipeline against baseline approaches
 - Compare token reduction vs. information retention across different percentage targets
-- Measure performance on long summarization datasets (GovReport, Multi-LexSum)
 
 ### Semantic-Biased Extraction
 - Allow users to provide query sentences or keywords that represent their specific interests.
 - Compute semantic similarity between each sentence and the user's query
-- Add this similarity as a bias term that shifts sentences rightward in the similarity-ratio space, increasing the likelihood of being selected.
+- Add this similarity as a bias term that shifts sentences upward in the ratio-similarity space, increasing the likelihood of being selected.
 
 
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Requirements
@@ -141,5 +140,6 @@ pip install -r requirements.txt
 - scipy (optimization)
 - tiktoken (token counting)
 - matplotlib (visualization)
+- plotly (visualization)
 
 See `example.ipynb` for a complete demonstration on the GovReport dataset.

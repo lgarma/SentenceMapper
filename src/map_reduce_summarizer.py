@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 from openai import OpenAI
 from dotenv import load_dotenv
+from datasets import load_dataset
 from rouge_score import rouge_scorer
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
@@ -198,23 +199,6 @@ class MapReduceSummarizer:
         }
 
 
-def load_jsonl_example(file_path: str, index: int = 0) -> Dict[str, str]:
-    """Load a specific example from a JSONL file.
-
-    Args:
-        file_path: Path to the JSONL file
-        index: Index of the example to load (default: 0)
-
-    Returns:
-        Dictionary with keys: id, pid, input, output
-    """
-    with open(file_path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            if i == index:
-                return json.loads(line)
-    raise IndexError(f"Index {index} not found in file")
-
-
 def calculate_rouge_scores(reference: str, candidate: str) -> Dict[str, float]:
     """Calculate ROUGE scores between reference and candidate summaries.
 
@@ -274,16 +258,20 @@ def main():
     """Main function to demonstrate map-reduce summarization on GovReport dataset."""
 
     # Configuration
-    data_file = Path(__file__).parent.parent / "data" / "gov_report" / "train.jsonl"
-    example_index = 0  # np.random.randint(0, 200)  # Random index between 0 and 200
+    example_index = 1
 
     print("=" * 80)
     print("Map-Reduce Summarization with SentenceMapper + OpenAI")
     print("=" * 80)
 
-    # Load example
-    print(f"\nLoading example {example_index} from {data_file.name}...")
-    example = load_jsonl_example(str(data_file), example_index)
+    # Load example using datasets library
+    print(f"\nLoading example {example_index} from GovReport dataset...")
+    govreport = load_dataset("ccdv/govreport-summarization", split="train[:10]")
+    example = {
+        "id": govreport[example_index].get("id", f"doc_{example_index}"),
+        "input": govreport[example_index]["report"],
+        "output": govreport[example_index]["summary"],
+    }
 
     print(f"Document ID: {example['id']}")
     print(f"Input length: {len(example['input'])} characters")
