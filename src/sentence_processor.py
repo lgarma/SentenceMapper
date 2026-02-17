@@ -1,10 +1,16 @@
-"""Sentence processing and analysis module."""
+"""Sentence processing and analysis module.
+
+Splits the full document into sentences, then for each sentence builds a
+centered context window of complete surrounding sentences (excluding the
+target sentence itself) up to a character budget.  Cosine similarity is
+computed between the sentence embedding and its context embedding, giving a
+clean representativeness signal without self-overlap artifacts.
+"""
 
 from typing import Any, Optional
 
 import numpy as np
 import tiktoken
-from chonkie import SentenceChunker
 from model2vec import StaticModel
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -15,12 +21,12 @@ except ImportError:
 
 
 class SentenceProcessor:
-    """Process and analyze sentences from text chunks."""
+    """Process and analyze sentences using centered context windows."""
 
     def __init__(
         self,
         embedding_model_name: str = "minishlab/potion-base-8M",
-        chunk_size: int = 2048,
+        context_budget: int = 2048,
         min_sentence_length: int = 256,
         encoding_name: str = "cl100k_base",
         custom_parameters: Optional[dict[str, Any]] = None,
@@ -28,223 +34,227 @@ class SentenceProcessor:
         """Initialize the sentence processor.
 
         Args:
-            embedding_model_name: Name of the embedding model (default: "minishlab/potion-base-8M")
-            chunk_size: Size of text chunks in characters (default: 2048)
-            min_sentence_length: Minimum sentence length in characters (default: 256)
-            encoding_name: Name of the tiktoken encoding (default: "cl100k_base")
-            custom_parameters: Optional dict of parameters for SentenceSplitter
-                             (e.g., {"prefixes": ["H.R", "S"], "acronyms": "..."}).
-                             If None, uses Chonkie's SentenceChunker (default: None)
+            embedding_model_name: Name of the embedding model
+                (default: "minishlab/potion-base-8M")
+            context_budget: Maximum character budget for the context window
+                surrounding each sentence (default: 2048)
+            min_sentence_length: Minimum sentence length in characters.
+                Shorter sentences are merged (default: 256)
+            encoding_name: Name of the tiktoken encoding
+                (default: "cl100k_base")
+            custom_parameters: Optional dict of parameters for
+                SentenceSplitter (e.g., {"prefixes": ["H.R", "S"]}).
+                If None, uses default SentenceSplitter settings
+                (default: None)
         """
         self.embedding_model = StaticModel.from_pretrained(embedding_model_name)
-
-        # Initialize chunkers based on whether custom parameters are provided
-        if custom_parameters is not None:
-            # Use SentenceSplitter with custom parameters for both chunkers
-            self.chunker = SentenceSplitter(
-                chunk_size=chunk_size, chunk_overlap=0, **custom_parameters
-            )
-            self.sentence_chunker = SentenceSplitter(
-                chunk_size=min_sentence_length, chunk_overlap=0, **custom_parameters
-            )
-            self.use_custom_splitter = True
-        else:
-            # Use Chonkie's SentenceChunker for both
-            self.chunker = SentenceChunker(chunk_size=chunk_size, chunk_overlap=0)
-            self.sentence_chunker = SentenceChunker(
-                chunk_size=min_sentence_length, chunk_overlap=0
-            )
-            self.use_custom_splitter = False
-
+        self.context_budget = context_budget
         self.encoder = tiktoken.get_encoding(encoding_name)
+        self.context_delimiter = "(...)"
 
-    def chunk_text(self, text: str) -> list[Any]:
-        """Split text into chunks.
+        # Sentence splitter — merges short sentences up to min_sentence_length
+        if custom_parameters is None:
+            custom_parameters = {}
 
-        Args:
-            text: Input text to chunk
+        self.sentence_splitter = SentenceSplitter(
+            chunk_size=min_sentence_length,
+            chunk_overlap=0,
+            **custom_parameters,
+        )
 
-        Returns:
-            List of text chunks
-        """
-        if self.use_custom_splitter:
-            # SentenceSplitter returns list of strings, wrap them in objects with .text attribute
-            chunks = self.chunker.split_text(text)
-            return [type("Chunk", (), {"text": chunk})() for chunk in chunks]
-        else:
-            # Chonkie returns chunk objects with .text attribute
-            return self.chunker(text)
+    # ------------------------------------------------------------------
+    # Sentence extraction
+    # ------------------------------------------------------------------
 
-    def extract_sentences(self, chunks: list[Any]) -> list[list[Any]]:
-        """Extract sentences from each chunk.
+    def extract_sentences(self, text: str) -> list[str]:
+        """Split the full document into sentences.
 
         Args:
-            chunks: List of text chunks
+            text: Full document text
 
         Returns:
-            List of sentence lists, one per chunk
+            List of sentence strings
         """
-        result = []
-        for chunk in chunks:
-            if self.use_custom_splitter:
-                # SentenceSplitter returns list of strings
-                sentences = self.sentence_chunker.split_text(chunk.text)
-            else:
-                # Chonkie returns chunk objects with .text attribute
-                sentences = [s.text for s in self.sentence_chunker(chunk.text)]
+        return self.sentence_splitter.split_text(text)
 
-            # Wrap each sentence string in a simple object with .text attribute
-            sentence_objs = [
-                type("Sentence", (), {"text": sent})() for sent in sentences
-            ]
-            result.append(sentence_objs)
+    # ------------------------------------------------------------------
+    # Context window construction
+    # ------------------------------------------------------------------
 
-        return result
+    def build_context_window(self, sentences: list[str], target_idx: int) -> str:
+        """Build a context window of complete sentences around the target.
 
-    def compute_similarities(
-        self, chunk_embeddings: np.ndarray, sentence_embeddings: list[np.ndarray]
-    ) -> list[np.ndarray]:
-        """Compute cosine similarity between sentences and their parent chunks.
+        Expands outward from the target sentence, alternating left and right,
+        adding complete sentences until the character budget is reached.
+        The target sentence itself is EXCLUDED from the context.
 
         Args:
-            chunk_embeddings: Array of chunk embeddings (num_chunks, embedding_dim)
-            sentence_embeddings: List of sentence embedding arrays per chunk
+            sentences: List of all document sentences
+            target_idx: Index of the target sentence
 
         Returns:
-            List of similarity arrays, one per chunk
+            Context string with a delimiter showing where the target
+            sentence would be located.
         """
-        similarities = []
-        for chunk_idx, sentence_embeds in enumerate(sentence_embeddings):
-            chunk_embedding = chunk_embeddings[chunk_idx].reshape(1, -1)
-            sim = cosine_similarity(chunk_embedding, sentence_embeds)
-            similarities.append(sim.flatten())
-        return similarities
+        budget = self.context_budget
+        left_idx = target_idx - 1
+        right_idx = target_idx + 1
+        left_parts: list[str] = []
+        right_parts: list[str] = []
+        current_length = 0
 
-    def compute_length_ratios(
-        self, chunks: list[Any], sentences: list[list[Any]]
-    ) -> list[float]:
-        """Compute sentence-to-chunk length ratios.
+        while current_length < budget and (left_idx >= 0 or right_idx < len(sentences)):
+            # Try adding from the left
+            if left_idx >= 0:
+                candidate = sentences[left_idx]
+                if current_length + len(candidate) <= budget:
+                    left_parts.append(candidate)
+                    current_length += len(candidate)
+                    left_idx -= 1
+                else:
+                    left_idx = -1  # stop expanding left
 
-        Args:
-            chunks: List of text chunks
-            sentences: List of sentence lists per chunk
+            # Try adding from the right
+            if right_idx < len(sentences):
+                candidate = sentences[right_idx]
+                if current_length + len(candidate) <= budget:
+                    right_parts.append(candidate)
+                    current_length += len(candidate)
+                    right_idx += 1
+                else:
+                    right_idx = len(sentences)  # stop expanding right
 
-        Returns:
-            Flattened list of length ratios for all sentences
-        """
-        ratios = []
-        for chunk_idx, sentence_list in enumerate(sentences):
-            chunk_length = len(chunks[chunk_idx].text)
-            for sentence in sentence_list:
-                sentence_length = len(sentence.text)
-                ratios.append(sentence_length / chunk_length)
-        return ratios
+            # If neither side could add, break
+            if (left_idx < 0 or current_length >= budget) and (
+                right_idx >= len(sentences) or current_length >= budget
+            ):
+                break
 
-    def count_tokens(self, sentences: list[list[Any]]) -> list[int]:
-        """Count tokens for each sentence.
+        # Reconstruct in document order: reversed left + right
+        left_context = " ".join(reversed(left_parts)).strip()
+        right_context = " ".join(right_parts).strip()
+        delimiter = self.context_delimiter.strip()
 
-        Args:
-            sentences: List of sentence lists per chunk
+        if not delimiter:
+            context_parts = [p for p in [left_context, right_context] if p]
+            return " ".join(context_parts)
 
-        Returns:
-            Flattened list of token counts for all sentences
-        """
-        tokens = []
-        for sentence_list in sentences:
-            for sentence in sentence_list:
-                tokens.append(len(self.encoder.encode(sentence.text)))
-        return tokens
+        if left_context and right_context:
+            return f"{left_context} {delimiter} {right_context}"
+        if left_context:
+            return f"{left_context} {delimiter}"
+        if right_context:
+            return f"{delimiter} {right_context}"
+        return delimiter
 
-    def select_sentences(
-        self, sentences: list[list[Any]], mask: np.ndarray
-    ) -> list[str]:
-        """Select sentences based on binary mask.
-
-        Args:
-            sentences: List of sentence lists per chunk
-            mask: Binary mask indicating which sentences to select
-
-        Returns:
-            List of selected sentence texts in order of appearance
-        """
-        selected = []
-        idx = 0
-        for sentence_list in sentences:
-            for sentence in sentence_list:
-                if mask[idx] == 1:
-                    selected.append(sentence.text)
-                idx += 1
-        return selected
-
-    def select_sentences_with_separators(
-        self, sentences: list[list[Any]], mask: np.ndarray, separator: str = " (...) "
-    ) -> str:
-        """Select sentences and join them with separators for non-consecutive sentences.
-
-        Args:
-            sentences: List of sentence lists per chunk
-            mask: Binary mask indicating which sentences to select
-            separator: String to insert between non-consecutive sentences (default: " (...) ")
-
-        Returns:
-            String with selected sentences joined, using separator for gaps
-        """
-        selected_parts = []
-        idx = 0
-        prev_idx = -2  # Initialize to ensure first sentence doesn't get a separator
-
-        for sentence_list in sentences:
-            for sentence in sentence_list:
-                if mask[idx] == 1:
-                    # Add separator if there's a gap from the previous selected sentence
-                    if prev_idx >= 0 and idx != prev_idx + 1:
-                        selected_parts.append(separator)
-                    selected_parts.append(sentence.text)
-                    prev_idx = idx
-                idx += 1
-
-        return "".join(selected_parts)
+    # ------------------------------------------------------------------
+    # Feature computation
+    # ------------------------------------------------------------------
 
     def compute_document_features(self, text: str) -> dict:
-        """Compute similarities, ratios, and tokens for all sentences in a document.
+        """Compute similarities, ratios, and tokens for all sentences.
+
+        For each sentence:
+        - Builds a centered context window of surrounding sentences
+        - Computes cosine similarity between the sentence embedding and the
+          context embedding (sentence excluded from context)
+        - Computes ratio = len(sentence) / (len(sentence) + len(context))
 
         Args:
-            text: Input document text
+            text: Full document text
 
         Returns:
             Dictionary containing:
-                - chunks: List of text chunks
-                - sentences: List of sentence lists per chunk
-                - similarities: Cosine similarities between sentences and chunks
-                - all_similarities: Flattened array of all similarities
-                - ratios: Sentence-to-chunk length ratios
-                - tokens: Token counts per sentence
-                - total_tokens: Total token count
+                - sentences: list[str]
+                - similarities: np.ndarray of cosine similarities
+                - ratios: np.ndarray of length ratios
+                - tokens: np.ndarray of token counts per sentence
+                - total_tokens: int
+                - contexts: list[str]  (context window for each sentence)
         """
-        chunks = self.chunk_text(text)
-        chunk_embeddings = self.embedding_model.encode([chunk.text for chunk in chunks])
-        sentences = self.extract_sentences(chunks)
-        sentence_embeddings = [
-            self.embedding_model.encode([sentence.text for sentence in sentence_list])
-            for sentence_list in sentences
-        ]
-        similarities = self.compute_similarities(chunk_embeddings, sentence_embeddings)
-        ratios = self.compute_length_ratios(chunks, sentences)
-        tokens = self.count_tokens(sentences)
-        all_similarities = np.array(
-            [sim for sublist in similarities for sim in sublist]
+        sentences = self.extract_sentences(text)
+        n = len(sentences)
+
+        # Build context windows for every sentence
+        contexts = [self.build_context_window(sentences, i) for i in range(n)]
+
+        # Embed sentences and contexts
+        sentence_embeddings = self.embedding_model.encode(sentences)
+        context_embeddings = self.embedding_model.encode(contexts)
+
+        # Cosine similarity between each sentence and its own context
+        similarities = np.array(
+            [
+                cosine_similarity(
+                    sentence_embeddings[i].reshape(1, -1),
+                    context_embeddings[i].reshape(1, -1),
+                )[0, 0]
+                for i in range(n)
+            ]
         )
-        all_sentences = [
-            sentence.text for sentence_list in sentences for sentence in sentence_list
-        ]
+
+        # Ratios: sentence length / (sentence length + context length)
+        ratios = np.array(
+            [
+                len(sentences[i]) / (len(sentences[i]) + len(contexts[i]))
+                if len(contexts[i]) > 0
+                else 1.0
+                for i in range(n)
+            ]
+        )
+
+        # Token counts
+        tokens = np.array([len(self.encoder.encode(s)) for s in sentences])
 
         return {
-            "chunks": chunks,
             "sentences": sentences,
-            "all_sentences": all_sentences,
             "similarities": similarities,
-            "all_similarities": all_similarities,
-            "ratios": np.array(ratios),
-            "tokens": np.array(tokens),
-            "total_tokens": sum(tokens),
+            "ratios": ratios,
+            "tokens": tokens,
+            "total_tokens": int(tokens.sum()),
+            "contexts": contexts,
         }
+
+    # ------------------------------------------------------------------
+    # Sentence selection helpers
+    # ------------------------------------------------------------------
+
+    def select_sentences(self, sentences: list[str], mask: np.ndarray) -> list[str]:
+        """Select sentences based on binary mask.
+
+        Args:
+            sentences: List of sentence strings
+            mask: Binary mask indicating which sentences to select
+
+        Returns:
+            List of selected sentence texts
+        """
+        return [s for s, m in zip(sentences, mask) if m == 1]
+
+    def select_sentences_with_separators(
+        self,
+        sentences: list[str],
+        mask: np.ndarray,
+        separator: str = " (...) ",
+    ) -> str:
+        """Select sentences and join with separators for non-consecutive gaps.
+
+        Args:
+            sentences: List of sentence strings
+            mask: Binary mask indicating which sentences to select
+            separator: String to insert between non-consecutive sentences
+
+        Returns:
+            Joined string of selected sentences
+        """
+        selected_parts: list[str] = []
+        prev_idx = -2
+
+        for idx, (sentence, m) in enumerate(zip(sentences, mask)):
+            if m == 1:
+                if prev_idx >= 0 and idx != prev_idx + 1:
+                    selected_parts.append(separator)
+                selected_parts.append(sentence)
+                prev_idx = idx
+
+        return "".join(selected_parts)
