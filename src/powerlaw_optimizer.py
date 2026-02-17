@@ -14,7 +14,11 @@ class PowerLawOptimizer:
     - B (slope) is fixed and represents the natural scaling relationship
     - A (amplitude) is adjusted to select more or fewer sentences
 
-    Sentences ABOVE the power law curve are selected (information-dense).
+    The frontier is fitted to the UPPER bound (ceiling) of the ratio-similarity
+    distribution. The upper frontier is more stable across documents than the
+    lower frontier. To select sentences, the ceiling is lowered until the
+    target token budget is reached. Sentences ABOVE the lowered curve are
+    selected (information-dense).
     """
 
     def __init__(
@@ -36,9 +40,10 @@ class PowerLawOptimizer:
     def get_params(self, x: float) -> tuple[float, float]:
         """Get parameters for power law function based on input x.
 
-        When x=0, the intercept equals the initial fitted baseline value.
-        When x=1, the intercept is moved up significantly to select fewer sentences.
-        The intercept moves up as x increases while slope remains fixed.
+        The frontier is fitted to the upper bound (ceiling). To select
+        sentences we lower the ceiling. At x=0 the curve is far below the
+        ceiling (most sentences selected). At x=1 the curve sits at the
+        ceiling (fewest sentences selected).
 
         Args:
             x: Optimization parameter between 0 and 1
@@ -46,10 +51,10 @@ class PowerLawOptimizer:
         Returns:
             Tuple of (amplitude, slope) parameters
         """
-        # Move intercept UP as x increases (to select fewer sentences)
-        # At x=0: intercept = initial_intercept (baseline - about 50% selected)
-        # At x=1: intercept is increased by ~3 orders of magnitude in log space
-        intercept = self.initial_intercept + 3 * x
+        # Move intercept DOWN from the ceiling as x decreases
+        # At x=1: intercept = initial_intercept (at the ceiling, fewest selected)
+        # At x=0: intercept = initial_intercept - 3 (well below, most selected)
+        intercept = self.initial_intercept - 3 * (1 - x)
 
         # Convert intercept to amplitude: amplitude = 10^intercept
         amplitude = 10**intercept
@@ -116,8 +121,9 @@ class PowerLawOptimizer:
     ) -> tuple[np.ndarray, float]:
         """Filter sentences to achieve a target percentage of total tokens.
 
-        Sentences ABOVE the power law frontier are considered information-dense
-        and are selected.
+        The upper frontier (ceiling) is lowered until the selected sentences
+        sum to approximately the target token count. Sentences ABOVE the
+        lowered curve are considered information-dense and are selected.
 
         Args:
             similarities: Array of cosine similarities
@@ -174,25 +180,37 @@ class PowerLawOptimizer:
 def fit_frontier_curve(
     similarities: np.ndarray,
     ratios: np.ndarray,
-    quantile: float = 0.05,
-    method: str = "binned_min",
+    quantile: float = 0.95,
+    method: str = "binned_max",
     n_bins: int = 20,
     min_points_per_bin: int = 5,
+    robust_fit: bool = True,
+    outlier_sigma: float = 3.0,
 ) -> tuple[float, float, dict]:
-    """Fit a linear function to the baseline relationship in log-log space.
+    """Fit a linear function to the upper frontier relationship in log-log space.
 
-    This identifies the lower-bound ratio-similarity relationship. Sentences above
-    this baseline have higher similarity than the minimum expected for their length.
+    This identifies the upper-bound ratio-similarity relationship — the ceiling
+    of representativeness. The upper frontier is more stable across documents
+    than the lower frontier, as it reflects the fundamental information-theoretic
+    limit of how much context a sentence of a given length can capture.
+
+    Sentences are selected by lowering this ceiling until the target token
+    budget is reached.
 
     Args:
         similarities: Array of cosine similarities
         ratios: Array of sentence-to-chunk length ratios
-        quantile: Quantile to use for baseline (default: 0.05, i.e., 5th percentile)
-        method: Method to use ('quantile' or 'binned_min')
+        quantile: Quantile to use for frontier (default: 0.95, i.e., 95th percentile)
+        method: Method to use ('quantile', 'binned_min', or 'binned_max')
             - 'quantile': Quantile regression on all points
-            - 'binned_min': Fit to low quantile values in binned ranges (recommended)
-        n_bins: Number of bins for 'binned_min' method
-        min_points_per_bin: Minimum points per bin for 'binned_min' method
+            - 'binned_max': Fit to high quantile values in binned ranges (recommended)
+            - 'binned_min': Fit to low quantile values in binned ranges (legacy)
+        n_bins: Number of bins for binned methods
+        min_points_per_bin: Minimum points per bin for binned methods
+        robust_fit: If True, perform a robust refit by removing frontier-point
+            outliers based on median absolute deviation (MAD) of residuals.
+        outlier_sigma: Outlier cutoff (in robust sigma units) used when
+            robust_fit=True.
 
     Returns:
         slope: Slope of the line in log-log space (power law exponent)
@@ -212,8 +230,52 @@ def fit_frontier_curve(
     log_ratio = np.log10(ratio_valid)
     log_sim = np.log10(sim_valid)
 
+    def _fit_with_optional_robust_refit(
+        x_frontier: np.ndarray,
+        y_frontier: np.ndarray,
+    ) -> tuple[float, float, float, np.ndarray]:
+        """Fit linear frontier with optional robust outlier rejection."""
+        X = x_frontier.reshape(-1, 1)
+        y = y_frontier
+
+        model = LinearRegression()
+        model.fit(X, y)
+
+        inlier_mask = np.ones_like(y, dtype=bool)
+
+        # Optional robust refit to reduce sensitivity to single bad bins.
+        if robust_fit and len(y) >= 6:
+            residuals = y - model.predict(X)
+            med = np.median(residuals)
+            mad = np.median(np.abs(residuals - med))
+
+            if mad > 0:
+                robust_sigma = 1.4826 * mad
+                candidate_mask = np.abs(residuals - med) <= outlier_sigma * robust_sigma
+
+                # Keep enough points to avoid unstable fits.
+                if np.sum(candidate_mask) >= max(3, len(y) // 2):
+                    inlier_mask = candidate_mask
+                    X_in = X[inlier_mask]
+                    y_in = y[inlier_mask]
+                    model = LinearRegression()
+                    model.fit(X_in, y_in)
+
+        slope_ = model.coef_[0]
+        intercept_ = model.intercept_
+
+        # Report R² over the points actually used in the final fit.
+        X_eval = X[inlier_mask]
+        y_eval = y[inlier_mask]
+        y_pred = model.predict(X_eval)
+        ss_res = np.sum((y_eval - y_pred) ** 2)
+        ss_tot = np.sum((y_eval - np.mean(y_eval)) ** 2)
+        r_squared_ = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+
+        return slope_, intercept_, r_squared_, inlier_mask
+
     if method == "quantile":
-        # Fit to the specified quantile (default: median/lower bound)
+        # Fit to the specified quantile (default: 95th percentile / upper bound)
         # We'll use a sliding window approach to estimate the quantile frontier
         sort_idx = np.argsort(log_ratio)
         log_ratio_sorted = log_ratio[sort_idx]
@@ -232,19 +294,30 @@ def fit_frontier_curve(
         frontier_ratio = np.array(frontier_ratio)
         frontier_sim = np.array(frontier_sim)
 
-        # Fit linear regression to frontier points
-        X = frontier_ratio.reshape(-1, 1)
-        y = frontier_sim
-        model = LinearRegression()
-        model.fit(X, y)
-        slope = model.coef_[0]
-        intercept = model.intercept_
+        slope, intercept, r_squared, frontier_inlier_mask = (
+            _fit_with_optional_robust_refit(frontier_ratio, frontier_sim)
+        )
 
-        # Calculate R²
-        y_pred = model.predict(X)
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+    elif method == "binned_max":
+        # Divide ratio range into bins and take maximum similarity in each bin
+        bins = np.linspace(log_ratio.min(), log_ratio.max(), n_bins + 1)
+        bin_indices = np.digitize(log_ratio, bins)
+
+        frontier_ratio = []
+        frontier_sim = []
+
+        for i in range(1, n_bins + 1):
+            mask = bin_indices == i
+            if np.sum(mask) >= min_points_per_bin:
+                frontier_ratio.append(log_ratio[mask].mean())
+                frontier_sim.append(log_sim[mask].max())
+
+        frontier_ratio = np.array(frontier_ratio)
+        frontier_sim = np.array(frontier_sim)
+
+        slope, intercept, r_squared, frontier_inlier_mask = (
+            _fit_with_optional_robust_refit(frontier_ratio, frontier_sim)
+        )
 
     elif method == "binned_min":
         # Divide ratio range into bins and take minimum similarity in each bin
@@ -263,22 +336,14 @@ def fit_frontier_curve(
         frontier_ratio = np.array(frontier_ratio)
         frontier_sim = np.array(frontier_sim)
 
-        # Fit linear regression to frontier points
-        X = frontier_ratio.reshape(-1, 1)
-        y = frontier_sim
-        model = LinearRegression()
-        model.fit(X, y)
-        slope = model.coef_[0]
-        intercept = model.intercept_
-
-        # Calculate R²
-        y_pred = model.predict(X)
-        ss_res = np.sum((y - y_pred) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        slope, intercept, r_squared, frontier_inlier_mask = (
+            _fit_with_optional_robust_refit(frontier_ratio, frontier_sim)
+        )
 
     else:
-        raise ValueError(f"Unknown method: {method}. Use 'quantile' or 'binned_min'")
+        raise ValueError(
+            f"Unknown method: {method}. Use 'quantile', 'binned_max', or 'binned_min'"
+        )
 
     # Create equation string
     # In log-log space: log(similarity) = slope * log(ratio) + intercept
@@ -292,6 +357,9 @@ def fit_frontier_curve(
         "r_squared": r_squared,
         "frontier_ratio": frontier_ratio,
         "frontier_sim": frontier_sim,
+        "frontier_inlier_mask": frontier_inlier_mask,
+        "robust_fit": robust_fit,
+        "outlier_sigma": outlier_sigma,
     }
 
     return slope, intercept, info
