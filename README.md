@@ -1,27 +1,29 @@
 # Sentence Mapper
 
-**Extractive summarization for large documetns based on information-density.**
+**Extractive summarization for large documents based on information-density.**
 
-## Identifing information-dense sentences
+## Identifying information-dense sentences
 
-The idea is simple, we can evaluate sentences in two dimensions:
+The idea is simple: for each sentence in a document, we build a **centered context window** of surrounding sentences (excluding the target sentence itself) and evaluate two dimensions:
 
-- How well does the sentence represent the surrounding context.
-- How short is the sentence relative to its parent chunk.
+- How well does the sentence represent its surrounding context.
+- How short is the sentence relative to the context window.
 
-**Main Heuristic:** The best sentences are those that can capture most semantic meaning in the shortest amount of tokens. 
+**Main Heuristic:** The best sentences are those that can capture most semantic meaning in the shortest amount of tokens.
 
-The similarity between a sentence and its parent chunk naturally increases as there is more word overlap. Longer sentences (higher ratio) tend to have higher similarity simply because they share more content with the chunk. We can model this relation as a power law.
+By excluding the sentence from its own context, we measure pure representativeness without self-overlap artifacts.
+
+Each sentence is scored by:
 
 ```
-similarity = A × ratio^B
+score = similarity - α × ratio
 ```
 
-We can fit this relationship by binning the data and selecting the **lower quantile** (5th percentile by default) representing the minimum expected similarity. Sentences **above** this frontier have higher similarity than the expected for their length, indicating they pack more meaning per token.
+where *similarity* is the cosine similarity between the sentence and its context, *ratio* is `len(sentence) / (len(sentence) + len(context))`, and *α* (`length_bias`, default 0.5) is a linear penalty that mildly favours shorter sentences at equal similarity. Setting α = 0 gives pure similarity ranking.
 
-Using the residual between the expected value and the actual value, is easy to solve precisely which are the most informative sentences. We can set an objective number of tokens, or an objective percentage of the document.
+The additive form composes naturally with future bias terms (e.g. `+ β × query_similarity` for semantic-biased extraction).
 
-<!-- TODO: Add plot showing similarity vs ratio in log-log space with fitted power law -->
+Sentences are ranked by score and greedily selected from the top until the target token budget is reached.
 
 SentenceMapper is inspired by PatternRank (Schopf et al. 2022)[https://arxiv.org/pdf/2210.05245], a technique used to extract keyphrases using embeddings + Part of Speech patterns. Keyphrases are ranked based on their similarity to the input text.
 
@@ -51,14 +53,15 @@ from src.pipeline import SentenceMapperPipeline
 # Initialize with embedding model
 pipeline = SentenceMapperPipeline(
     embedding_model_name="minishlab/potion-base-8M",
-    chunk_size=2048,
-    min_sentence_lenght=256
+    context_budget=2048,
+    min_sentence_length=256,
+    length_bias=0.5,  # α: 0 = pure similarity, higher = penalise longer sentences
 )
 
 # Process document without filtering
 result = pipeline.process_document(text)
 
-# Or optimize to a target percentage (e.g., 20% of original tokens)
+# Or select to a target percentage (e.g., 30% of original tokens)
 result = pipeline.process_document(text, objective_percentage=0.3)
 
 print(f"Selected {result['selected_tokens']} tokens from {sum(result['tokens'])} total")
@@ -76,7 +79,7 @@ visualizer = SentenceMapperVisualizer()
 
 # Visualize similarity vs. ratio with power-law frontier and selected sentences
 visualizer.plot_similarity_vs_ratio(
-    result['all_similarities'],
+    result['similarities'],
     result['ratios'],
     mask=result['mask'],
     params=result['params']
@@ -85,23 +88,28 @@ visualizer.plot_similarity_vs_ratio(
 
 ## How It Works
 
-The optimizer fits a **power-law frontier** in log-log space using linear regression:
+### Sentence-Centered Context Windows
+
+1. **Split the document** into sentences (with configurable minimum length for merging short sentences).
+2. **Build context windows**: For each sentence, expand outward with complete neighboring sentences (alternating left/right) until a character budget is reached. The target sentence is excluded from its own context.
+3. **Compute similarity**: Cosine similarity between each sentence's embedding and its context embedding.
+4. **Compute ratio**: `len(sentence) / (len(sentence) + len(context))` — bounded in [0, 1].
+
+### Scoring & Selection
+
+Each sentence receives a score:
 
 ```
-log(similarity) = B × log(ratio) + log(A)
+score = similarity - α × ratio
 ```
 
-Where:
-- **B (slope)**: The natural scaling exponent between ratio and similarity
-- **A (amplitude)**: Controls the threshold position—increasing A selects fewer sentences
+where α (`length_bias`, default 0.5) mildly favours shorter sentences.
 
-### Optimization Process
+Sentences are ranked by descending score and greedily added until the token budget is reached.
 
-1. **Fit the frontier**: Identify the lower bound (5th percentile by default) of the ratio-similarity distribution to establish the minimum expected relationship
-2. **Adjust amplitude**: A bisection algorithm finds the optimal amplitude `A` that yields the target percentage of tokens by raising the threshold curve above the baseline
-3. **Select sentences**: All sentences above the adjusted threshold curve are selected
+### Why Not a Power-Law Frontier?
 
-<!-- TODO: Add plot showing how the frontier shifts during optimization -->
+Empirical analysis on GovReport shows the upper frontier (95th percentile) of the ratio-similarity distribution has a slope of ~0.1 — nearly flat. This means similarity alone almost entirely determines selection quality (ROUGE-1: 0.3465 for α=0 vs 0.3475 for additive α=0.5 across 50 reports). The simple additive score formula retains the length-bias insight from the power-law analysis without the complexity of frontier fitting + bisection search, and composes naturally with future bias terms. The power-law frontier is still available as an analysis/visualization tool.
 
 
 ## Preliminary Results
@@ -109,10 +117,6 @@ Where:
 <!-- TODO: Add Rouge score of mapping X amount of tokens. -->
 
 ## Future Work
-
-### Robust Sentence Selection
-- The current sentence selection is sensitive to the chunking strategy. One sentence could have low similarity to their parent chunk, but high similarity to a neighbour chunk.
-- Using different chunk sizes or weighting similarity with neighbors could make the process more robust.
 
 ### Benchmarking & Evaluation
 - Evaluate extractive summarization quality using ROUGE and BERTScore on long summarization datasets (GovReport, Multi-LexSum)
@@ -122,7 +126,7 @@ Where:
 ### Semantic-Biased Extraction
 - Allow users to provide query sentences or keywords that represent their specific interests.
 - Compute semantic similarity between each sentence and the user's query
-- Add this similarity as a bias term that shifts sentences upward in the ratio-similarity space, increasing the likelihood of being selected.
+- Add this similarity as a bias term: `score = similarity - α·ratio + β·query_similarity` (the additive scoring formula was chosen for this composability).
 
 
 ## Installation
@@ -135,9 +139,7 @@ uv sync
 
 - Python ≥ 3.12
 - model2vec (fast embeddings)
-- chonkie (sentence chunking)
 - scikit-learn (cosine similarity)
-- scipy (optimization)
 - tiktoken (token counting)
 - matplotlib (visualization)
 - plotly (visualization)
