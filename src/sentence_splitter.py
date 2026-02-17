@@ -252,5 +252,5 @@ class SentenceSplitter(TextSplitter):
 
     # Alias for backward compatibility
     def split(self, text: str) -> list[str]:
-        """Alias for split_sentences() for backward compatibility."""
-        return self.split_sentences(text)
+        """Alias for split_text() for backward compatibility."""
+        return self.split_text(text)

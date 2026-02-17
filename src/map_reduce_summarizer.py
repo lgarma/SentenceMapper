@@ -40,7 +40,7 @@ class MapReduceSummarizer:
     def __init__(
         self,
         embedding_model_name: str = "minishlab/potion-base-8M",
-        chunk_size: int = 2048,
+        context_budget: int = 2048,
         summarize_model: str = "gpt-4o-mini",
         judge_model: str = "gpt-4.1",
         objective_percentage: float = 0.2,
@@ -49,9 +49,9 @@ class MapReduceSummarizer:
 
         Args:
             embedding_model_name: Name of the embedding model for sentence extraction
-            chunk_size: Size of text chunks in tokens
-            chunk_overlap: Overlap between chunks in tokens
-            openai_model: OpenAI model to use for summarization
+            context_budget: Character budget for the context window around each sentence
+            summarize_model: OpenAI model to use for summarization
+            judge_model: OpenAI model to use for LLM-as-judge evaluation
             objective_percentage: Target percentage of tokens to extract (e.g., 0.2 = 20%)
         """
         # Load environment variables
@@ -69,8 +69,8 @@ class MapReduceSummarizer:
         # Initialize SentenceMapper pipeline
         self.pipeline = SentenceMapperPipeline(
             embedding_model_name=embedding_model_name,
-            chunk_size=chunk_size,
-            min_sentence_length=250,
+            context_budget=context_budget,
+            min_sentence_length=256,
         )
 
         self.objective_percentage = objective_percentage
