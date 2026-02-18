@@ -1,6 +1,6 @@
 # Sentence Mapper
 
-**Extractive summarization for large documents based on information-density.**
+**Extractive summarization for large documents based on similarity to local context.**
 
 ## Identifying information-dense sentences
 
@@ -9,7 +9,7 @@ The idea is simple: for each sentence in a document, we build a **centered conte
 - How well does the sentence represent its surrounding context.
 - How short is the sentence relative to the context window.
 
-**Main Heuristic:** The best sentences are those that can capture most semantic meaning in the shortest amount of tokens.
+**Main Heuristic:** The best sentences are those that can capture most semantic meaning.
 
 By excluding the sentence from its own context, we measure pure representativeness without self-overlap artifacts.
 

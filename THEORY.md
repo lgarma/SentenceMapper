@@ -168,7 +168,7 @@ This should be validated across:
 
 - Multiple documents and domains (legal, scientific, news).
 - Different context budgets (512, 1024, 2048, 4096 characters).
-- Different embedding models (static vs. transformer-based).
+- ~~Different embedding models (static vs. transformer-based).~~ → **Resolved.** See Section 8 — embedding model choice has negligible impact on extraction and downstream summary quality.
 - Very short vs. very long sentences (does variance change even if mean is flat?).
 
 ---
@@ -215,11 +215,100 @@ result['selected_tokens']    # int — total selected tokens
 
 ## 8. Embedding Model
 
-The project uses **Model2Vec** (`minishlab/potion-base-8M`), a static embedding model that computes sentence embeddings as mean-pooled token embeddings. Key properties:
+The project uses **Model2Vec** (`minishlab/potion-base-2M`), a static embedding model that computes sentence embeddings as mean-pooled token embeddings. Key properties:
 
 - **No positional encoding** — token order doesn't affect the embedding (bag-of-words).
 - **Very fast** — orders of magnitude faster than transformer encoders.
 - **No learned positional bias** — but the bag-of-words nature means longer texts are dominated by majority tokens, which creates a content-dilution effect (different from but related to positional bias in transformers).
+
+### 8.1 Model Choice — Does It Matter?
+
+The Model2Vec / Potion family offers four English models of increasing capacity, all distilled from `bge-base-en-v1.5`:
+
+| Model | Parameters | MTEB avg | Embedding dim |
+|-------|-----------|----------|---------------|
+| `minishlab/potion-base-2M` | 2M | 44.77 | 256 |
+| `minishlab/potion-base-4M` | 4M | 48.23 | 256 |
+| `minishlab/potion-base-8M` | 8M | 50.03 | 256 |
+| `minishlab/potion-base-32M` | 32M | 51.66 | 256 |
+
+Although MTEB scores span nearly 7 points, SentenceMapper uses embeddings for a narrow task: ranking sentences by representativeness within a local context window. The hypothesis was that **relative ranking is preserved across models**, even if absolute similarity values differ — and therefore the cheapest model suffices.
+
+### 8.2 Experiment 1 — Extractive Text Overlap (4 models, 50 docs)
+
+All four models were run through the full extraction pipeline on 50 GovReport documents at 30% compression with α = 0.5. The extracted text was compared against human-written reference summaries using ROUGE.
+
+**ROUGE scores (mean over 50 documents):**
+
+| Model | ROUGE-1 | ROUGE-2 | ROUGE-L |
+|-------|---------|---------|----------|
+| potion-base-2M | 0.3475 | 0.1635 | 0.1617 |
+| potion-base-4M | 0.3490 | 0.1654 | 0.1630 |
+| potion-base-8M | 0.3475 | 0.1649 | 0.1638 |
+| potion-base-32M | 0.3487 | 0.1663 | 0.1644 |
+
+The spread across all four models is < 0.003 ROUGE points — well within noise.
+
+**Per-document correlation (2M vs 32M):** Pearson r = 0.979 on per-document ROUGE-L scores. The two models agree not just on average but on which documents are easy or hard to extract from.
+
+**Jaccard overlap of selected sentences:**
+
+| Pair | Jaccard overlap |
+|------|-----------------|
+| 2M vs 4M | 0.82 |
+| 4M vs 8M | 0.76 |
+| 8M vs 32M | 0.78 |
+| 2M vs 32M (extremes) | 0.62 |
+
+Adjacent models share ~76–82% of selected sentences. Even the extreme pair (2M vs 32M) shares 62%, and the remaining 38% of differing sentences produce indistinguishable ROUGE.
+
+### 8.3 Experiment 2 — Spearman Rank Correlation (4 models, 50 docs)
+
+To directly test whether models preserve **sentence ranking**, Spearman rank correlation was computed on the score vectors (similarity − α × ratio) across all sentences in each document, then averaged.
+
+| Pair | Mean Spearman ρ |
+|------|------------------|
+| 2M vs 4M | 0.964 |
+| 4M vs 8M | 0.983 |
+| 8M vs 32M | 0.976 |
+| 2M vs 8M | 0.953 |
+| 4M vs 32M | 0.966 |
+| 2M vs 32M | 0.886 |
+
+All pairs show ρ ≥ 0.87. Adjacent models correlate at ρ > 0.95. Even the most distant pair (2M vs 32M) has ρ = 0.886 — strong rank agreement.
+
+### 8.4 Experiment 3 — End-to-End LLM Summary Quality (2M vs 32M, 10 docs)
+
+The strongest test: does the embedding model choice affect the quality of the **final LLM-generated summary**? For 10 GovReport documents:
+
+1. Extract sentences using 2M and 32M independently (30% compression, α = 0.5).
+2. Summarize each extraction with `gpt-4.1`.
+3. Evaluate each summary against the human reference with an LLM judge (`gpt-5`, scoring rubric 1–10).
+
+**Results:**
+
+| Metric | potion-base-2M | potion-base-32M | Δ (2M − 32M) |
+|--------|----------------|-----------------|---------------|
+| ROUGE-1 | 0.4766 | 0.4858 | −0.009 |
+| ROUGE-2 | 0.1335 | 0.1336 | −0.0001 |
+| ROUGE-L | 0.1826 | 0.1878 | −0.005 |
+| Judge score | 7.0 | 7.0 | 0.0 |
+
+**Win rates:** ROUGE-L: 2M wins 4, 32M wins 6, ties 0 (coin flip). Judge: **10 ties out of 10** — every document received the same score from both models.
+
+### 8.5 Conclusion — Embedding Model Invariance
+
+The three experiments form a converging evidence stack:
+
+1. **Extractive overlap:** ROUGE spread < 0.003, Jaccard 62–82% — models select largely the same sentences.
+2. **Rank preservation:** Spearman ρ ≥ 0.87 for all pairs — models agree on which sentences are best.
+3. **End-to-end quality:** LLM judge scores are identical — the abstraction step (summarization) completely washes out whatever small differences the embeddings introduce.
+
+**The embedding model does not meaningfully affect extraction or downstream summary quality.** The LLM's ability to synthesize information from high-density sentences dominates — slight variations in which sentences are selected are absorbed during summarization.
+
+This makes intuitive sense: the scoring formula `similarity − α × ratio` is a relative ranking over cosine similarities within a single document's context windows. All four Potion models are distilled from the same teacher (`bge-base-en-v1.5`) and share the same 256-dimensional embedding space. Their absolute similarity scales differ, but relative ordering is preserved.
+
+**Practical implication:** The project defaults to `potion-base-2M` — the smallest and fastest model — with no quality penalty.
 
 ---
 

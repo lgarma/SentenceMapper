@@ -145,8 +145,18 @@ class MapReduceSummarizer:
         )
 
         # Parse JSON response
+        choice = response.choices[0]
+        content = choice.message.content or ""
+
+        if not content.strip():
+            return {
+                "error": "Empty response from judge",
+                "finish_reason": choice.finish_reason,
+                "overall_score": None,
+            }
+
         try:
-            evaluation = json.loads(response.choices[0].message.content)
+            evaluation = json.loads(content)
             return evaluation
         except json.JSONDecodeError:
             # Fallback if JSON parsing fails
@@ -350,16 +360,14 @@ def main():
     else:
         print("\n## STRENGTHS")
         print(judge_evaluation.get("strengths", "N/A"))
-
-    print("\n## GAPS & MISSING CONTENT")
-    print(judge_evaluation.get("gaps", "N/A"))
-    print("\n## ACCURACY CONCERNS")
-    print(judge_evaluation.get("accuracy_concerns", "N/A"))
-
-    print("\n## STRATEGIC RECOMMENDATIONS")
-    print(judge_evaluation.get("strategic_recommendations", "N/A"))
-    print("\n## OVERALL ASSESSMENT")
-    print(judge_evaluation.get("overall_assessment", "N/A"))
+        print("\n## GAPS")
+        print(judge_evaluation.get("gaps", "N/A"))
+        print("\n## SEMANTIC BIAS")
+        print(judge_evaluation.get("semantic_bias", "N/A"))
+        print("\n## GUIDANCE")
+        print(judge_evaluation.get("guidance", "N/A"))
+        print("\n## OVERALL SCORE")
+        print(judge_evaluation.get("overall_score", "N/A"))
 
     print("\n" + "=" * 80)
     print("Complete!")

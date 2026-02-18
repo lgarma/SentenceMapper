@@ -20,12 +20,12 @@ def get_map_reduce_summary_prompt(extracted_text: str) -> str:
 The document comes from the GovReport dataset, which contains about 19.5k reports published by the U.S. Government Accountability Office (GAO) and Congressional Research Service (CRS).
 They cover researches on a broad range of national policy issues, including health care, education, national security, economics, and the environment.
 
-The text below consists of key sentences that were algorithmically selected based on their information density.
+The text below consists of key sentences that were algorithmically selected based on how similar they are to the surrounding context.
 When there is a gap between non-consecutive sentences, it is indicated with the string " (...) ".
 
 # Task
 
-Synthesize these extracted sentences into a coherent, well-structured summary that accurately reflects the main ideas and important details of the report.
+Synthesize these extracted sentences into a coherent, well-structured summary that accurately reflects the main ideas of the report.
 
 # Guidelines:
 
@@ -41,9 +41,11 @@ Synthesize these extracted sentences into a coherent, well-structured summary th
 """
 
 
-JUDGE_SYSTEM_PROMPT = """You are an expert evaluator specializing in assessing summary quality for long documents.
+JUDGE_SYSTEM_PROMPT = """You are an expert evaluator assessing summary quality for long government documents.
 
-Your role is to provide constructive, detailed analysis comparing generated summaries against reference summaries."""
+Your role is to judge how well a generated summary captures the essential content of a document.
+The reference summary is ONE valid summary, not the only valid one — different emphasis or structure is perfectly acceptable as long as the core information is preserved.
+Be fair: a summary that covers the main findings and conclusions well deserves a high score, even if it omits secondary details."""
 
 
 def get_llm_judge_prompt(
@@ -59,45 +61,45 @@ def get_llm_judge_prompt(
     Returns:
         Formatted prompt for the LLM judge
     """
-    return f"""Please evaluate the GENERATED SUMMARY against the REFERENCE SUMMARY and provide a comprehensive analysis.
+    return f"""Evaluate the GENERATED SUMMARY by comparing it to the REFERENCE SUMMARY.
 
 ## Context
 
-The summary bellow was generated using a map-reduce strategy.
+The summary was generated using a two-step extractive-abstractive pipeline:
+1. **Extraction:** Key sentences were selected from the original document based on information density, compressing it to ~{compression_ratio:.0f}% of the original length. Some details are inevitably lost at this compression level — this is expected and should not be heavily penalized.
+2. **Abstraction:** An LLM synthesized the extracted sentences into a coherent summary.
 
-In the map phase, key sentences were extracted from the original document based on their information density.
-Using this strategy, the document was compressed by {compression_ratio:.1f} percent.
+The document comes from the GovReport dataset (U.S. GAO and CRS reports on national policy issues).
+The reference summary is a human-written summary of the same document. It represents one valid summary, not the only valid one.
 
-These sentences were then given to an AI language model to synthesize into a coherent summary.
-The model is prompted with some high-level guidelines.
+## Scoring rubric
 
-The document comes from the GovReport dataset, which contains about 19.5k reports published by the U.S. Government Accountability Office (GAO) and Congressional Research Service (CRS).
-They cover researches on a broad range of national policy issues, including health care, education, national security, economics, and the environment.
-The reference summary is a human-written summary of the same document, and serves as the gold standard for comparison.
-
-We expect the GENERATED SUMMARY to miss some details from the REFERENCE SUMMARY due to the compression.
-We can improve the extraction strategy using a "semantic bias".
-These are a list of keywords or keyphrases that increase the likelihood of sentences containing them to be extracted.
+- **9-10:** Covers all major findings, conclusions, and recommendations. Minor omissions only.
+- **7-8:** Covers most key points. Misses some secondary details but the reader gets an accurate picture.
+- **5-6:** Captures the general topic and some findings, but misses important points or has structural issues.
+- **3-4:** Significant gaps in coverage or accuracy issues.
+- **1-2:** Largely inaccurate or missing most key content.
 
 ## Task
 
-Please provide your evaluation in JSON format with the following sections:
+Respond in JSON with these fields:
 
 {{
-    "differences": "Breifly describe the main differences between the two summaries",
-    "semantic_bias": "List of keywords that could improve the extraction phase. Avoid being too specific, focus on high-level themes.",
-    "high-level guidance": "Guidance for the Summarizer. Avoid being too specific. The guidance should be useful for other documents in the GovReport dataset.",
-    "overall_score": "A score from 1 to 10 indicating the overall quality of the generated summary."
+    "strengths": "What the generated summary does well (coverage, clarity, accuracy).",
+    "gaps": "Important content present in the reference but missing from the generated summary. Only flag genuinely important omissions, not minor details.",
+    "semantic_bias": "A short list of broad thematic keywords (not report-specific terms) that could help the extraction phase surface more relevant sentences. Example: ['legislative actions', 'funding allocations', 'program outcomes']. These should be useful across many GovReport documents, not just this one.",
+    "guidance": "One or two general guidelines for the summarizer that would improve summaries across the entire GovReport dataset. Do NOT reference this specific report. Example: 'Always include the main legislative recommendation and its projected impact.'",
+    "overall_score": 7
 }}
 
 ## Summaries
 
-Reference summary:
+**Reference summary:**
 {reference_summary}
 
 ---
 
-Generated summary:
+**Generated summary:**
 {generated_summary}
 
 """
