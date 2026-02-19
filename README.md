@@ -4,14 +4,11 @@
 
 ## Identifying information-dense sentences
 
-The idea is simple: for each sentence in a document, we build a **centered context window** of surrounding sentences (excluding the target sentence itself) and evaluate two dimensions:
+Not all sentences carry equal information. Some sentences are highly representative of their surrounding context (topic sentences, thesis statements, key findings), while others are transitional, repetitive, or low-content.
 
-- How well does the sentence represent its surrounding context.
-- How short is the sentence relative to the context window.
+**Main heuristic:** The best sentences are those that capture the most semantic meaning in the fewest tokens.
 
-**Main Heuristic:** The best sentences are those that can capture most semantic meaning.
-
-By excluding the sentence from its own context, we measure pure representativeness without self-overlap artifacts.
+We measure this by computing the **cosine similarity** between a sentence's embedding and the embedding of its surrounding context. High similarity means the sentence is a good proxy for the broader text. Combined with the sentence's **length ratio** (how short it is relative to the context), we can identify sentences that pack disproportionate meaning per token.
 
 Each sentence is scored by:
 
@@ -21,26 +18,25 @@ score = similarity - α × ratio
 
 where *similarity* is the cosine similarity between the sentence and its context, *ratio* is `len(sentence) / (len(sentence) + len(context))`, and *α* (`length_bias`, default 0.5) is a linear penalty that mildly favours shorter sentences at equal similarity. Setting α = 0 gives pure similarity ranking.
 
-The additive form composes naturally with future bias terms (e.g. `+ β × query_similarity` for semantic-biased extraction).
-
 Sentences are ranked by score and greedily selected from the top until the target token budget is reached.
 
-SentenceMapper is inspired by PatternRank (Schopf et al. 2022)[https://arxiv.org/pdf/2210.05245], a technique used to extract keyphrases using embeddings + Part of Speech patterns. Keyphrases are ranked based on their similarity to the input text.
+SentenceMapper is inspired by PatternRank (Schopf et al. 2022)[https://arxiv.org/pdf/2210.05245], a technique used to extract keyphrases using embeddings + Part of Speech patterns. Keyphrases are ranked based on their similarity to the text.
 
 
-## Use in Map - Reduce Summarization
+## Use Cases
 
+### Map - Reduce Summarization
 
-LLMs have difficulties processing large documents. Self-Attention is quadratic, and ...
+With the rise of context engineering, summarization has become more and more important. Context and attention are limited resources, and each additional token can degrade quality of the output.
 
-One way to summarize large documents is map-reduce, which consist of spliting large documents into smaller, more manageable chunks that fit LLM context windows. Generate a chunk-level summaries (mapping phase) and aggregate them togheter for a final summary (reduce phase).
+The classic way to summarize large documents is map-reduce, which consist of spliting large documents into smaller, more manageable chunks that fit LLM context windows. An LLM is tasked to generate a chunk-level summaries in parallel (mapping phase) and aggregate them togheter for a final summary (reduce phase).
 
-This approach is computationally expensive. 
+This approach is computationally expensive, and wasteful. Large documents like reports, clincial trials, legal cases can span 100k tokens, while summaries are somewhere in between 500-5000 tokens.  
 
 Using SentenceMapper for the mapping phase, is much cheaper and fast. Embeddings computation can be done blazingling fast with Model2Vec models.
 
-LLMs can typically infer missing context from these high-density sentences, significantly reducing:
-- Token consumption (e.g., 5,000 tokens instead of 50,000)
+LLMs can typically infer missing context from these representative sentences, significantly reducing:
+- Token consumption (compressing the document 70-80%)
 - Processing latency
 - API costs
 
@@ -106,10 +102,6 @@ score = similarity - α × ratio
 where α (`length_bias`, default 0.5) mildly favours shorter sentences.
 
 Sentences are ranked by descending score and greedily added until the token budget is reached.
-
-### Why Not a Power-Law Frontier?
-
-Empirical analysis on GovReport shows the upper frontier (95th percentile) of the ratio-similarity distribution has a slope of ~0.1 — nearly flat. This means similarity alone almost entirely determines selection quality (ROUGE-1: 0.3465 for α=0 vs 0.3475 for additive α=0.5 across 50 reports). The simple additive score formula retains the length-bias insight from the power-law analysis without the complexity of frontier fitting + bisection search, and composes naturally with future bias terms. The power-law frontier is still available as an analysis/visualization tool.
 
 
 ## Preliminary Results
