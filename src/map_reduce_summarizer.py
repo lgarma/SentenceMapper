@@ -43,7 +43,8 @@ class MapReduceSummarizer:
         context_budget: int = 2048,
         summarize_model: str = "gpt-4o-mini",
         judge_model: str = "gpt-4.1",
-        objective_percentage: float = 0.2,
+        objective_percentage: float | None = None,
+        objective_tokens: int | None = None,
     ):
         """Initialize the map-reduce summarizer.
 
@@ -52,8 +53,14 @@ class MapReduceSummarizer:
             context_budget: Character budget for the context window around each sentence
             summarize_model: OpenAI model to use for summarization
             judge_model: OpenAI model to use for LLM-as-judge evaluation
-            objective_percentage: Target percentage of tokens to extract (e.g., 0.2 = 20%)
+            objective_percentage: Target fraction of tokens to extract (e.g., 0.2 = 20%)
+            objective_tokens: Absolute target token count. If both are provided,
+                uses the minimum.
         """
+        # Default to 20% if neither is provided
+        if objective_percentage is None and objective_tokens is None:
+            objective_percentage = 0.2
+
         # Load environment variables
         load_dotenv()
 
@@ -74,6 +81,7 @@ class MapReduceSummarizer:
         )
 
         self.objective_percentage = objective_percentage
+        self.objective_tokens = objective_tokens
 
     def extract_key_sentences(self, text: str) -> str:
         """Extract key sentences from document using SentenceMapper.
@@ -85,7 +93,9 @@ class MapReduceSummarizer:
             Extracted key sentences as a single string
         """
         result = self.pipeline.process_document(
-            text, objective_percentage=self.objective_percentage
+            text,
+            objective_percentage=self.objective_percentage,
+            objective_tokens=self.objective_tokens,
         )
         return result["selected_text"]
 

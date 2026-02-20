@@ -166,7 +166,8 @@ class SentenceProcessor:
         Returns:
             Dictionary containing:
                 - sentences: list[str]
-                - similarities: np.ndarray of cosine similarities
+                - similarities: np.ndarray of local cosine similarities
+                - global_similarities: np.ndarray of global cosine similarities
                 - ratios: np.ndarray of length ratios
                 - tokens: np.ndarray of token counts per sentence
                 - total_tokens: int
@@ -182,12 +183,26 @@ class SentenceProcessor:
         sentence_embeddings = self.embedding_model.encode(sentences)
         context_embeddings = self.embedding_model.encode(contexts)
 
-        # Cosine similarity between each sentence and its own context
+        # Embed full document for global context
+        document_embedding = self.embedding_model.encode([text])[0]
+
+        # Cosine similarity between each sentence and its own context (local)
         similarities = np.array(
             [
                 cosine_similarity(
                     sentence_embeddings[i].reshape(1, -1),
                     context_embeddings[i].reshape(1, -1),
+                )[0, 0]
+                for i in range(n)
+            ]
+        )
+
+        # Cosine similarity between each sentence and full document (global)
+        global_similarities = np.array(
+            [
+                cosine_similarity(
+                    sentence_embeddings[i].reshape(1, -1),
+                    document_embedding.reshape(1, -1),
                 )[0, 0]
                 for i in range(n)
             ]
@@ -209,6 +224,7 @@ class SentenceProcessor:
         return {
             "sentences": sentences,
             "similarities": similarities,
+            "global_similarities": global_similarities,
             "ratios": ratios,
             "tokens": tokens,
             "total_tokens": int(tokens.sum()),

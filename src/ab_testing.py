@@ -24,10 +24,41 @@ from scipy.stats import spearmanr
 from src.sentence_processor import SentenceProcessor
 
 
+def _compute_target_tokens(
+    total_tokens: int,
+    objective_percentage: float | None = None,
+    objective_tokens: int | None = None,
+) -> int:
+    """Compute the target token budget from percentage and/or absolute tokens.
+
+    Args:
+        total_tokens: Total tokens in the document
+        objective_percentage: Target fraction of tokens (0-1), or None
+        objective_tokens: Absolute target token count, or None
+
+    Returns:
+        Target token budget. If both are provided, returns the minimum.
+        If neither is provided, raises ValueError.
+    """
+    if objective_percentage is None and objective_tokens is None:
+        raise ValueError(
+            "At least one of objective_percentage or objective_tokens must be provided"
+        )
+
+    candidates = []
+    if objective_percentage is not None:
+        candidates.append(int(total_tokens * objective_percentage))
+    if objective_tokens is not None:
+        candidates.append(int(objective_tokens))
+
+    return min(candidates)
+
+
 def compare_embedding_models(
     dataset,
     processors: Dict[str, SentenceProcessor],
-    objective_percentage: float = 0.3,
+    objective_percentage: float | None = None,
+    objective_tokens: int | None = None,
     alpha: float = 0.5,
 ) -> pd.DataFrame:
     """Compare embedding models on extractive selection quality.
@@ -39,7 +70,9 @@ def compare_embedding_models(
     Args:
         dataset: Dataset with 'report' and 'summary' fields
         processors: Dict mapping model name to SentenceProcessor instance
-        objective_percentage: Target compression ratio (0-1)
+        objective_percentage: Target compression ratio (0-1), or None
+        objective_tokens: Absolute target token count, or None.
+            If both are provided, uses the minimum.
         alpha: Length bias parameter for additive formula
 
     Returns:
@@ -63,7 +96,9 @@ def compare_embedding_models(
             embed_time = time.perf_counter() - t0
 
             total_tokens = int(np.sum(features["tokens"]))
-            budget = total_tokens * objective_percentage
+            budget = _compute_target_tokens(
+                total_tokens, objective_percentage, objective_tokens
+            )
 
             scores = features["similarities"] - alpha * features["ratios"]
 
@@ -189,7 +224,8 @@ def compare_llm_summaries(
     dataset,
     pipelines: Dict[str, Any],
     summarizer,
-    objective_percentage: float = 0.3,
+    objective_percentage: float | None = None,
+    objective_tokens: int | None = None,
     n_docs: int = 10,
 ) -> pd.DataFrame:
     """Compare LLM summary quality across embedding models.
@@ -203,7 +239,9 @@ def compare_llm_summaries(
         dataset: Dataset with 'report' and 'summary' fields
         pipelines: Dict mapping model short name to pipeline instance
         summarizer: MapReduceSummarizer instance for LLM generation and judging
-        objective_percentage: Target compression ratio (0-1)
+        objective_percentage: Target compression ratio (0-1), or None
+        objective_tokens: Absolute target token count, or None.
+            If both are provided, uses the minimum.
         n_docs: Number of documents to process
 
     Returns:
@@ -221,7 +259,9 @@ def compare_llm_summaries(
         extractions = {}
         for short, pipe in pipelines.items():
             result = pipe.process_document(
-                text, objective_percentage=objective_percentage
+                text,
+                objective_percentage=objective_percentage,
+                objective_tokens=objective_tokens,
             )
             extractions[short] = result["selected_text"]
 
